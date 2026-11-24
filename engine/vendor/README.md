@@ -694,6 +694,15 @@ docs/design/graphics-enhanced.md §3.17 "Rewrite of 2026-11-24"):
   `HoldLightShadowMaps::soft_size` gives a light's soft-shadow size while the hold is
   active, in place of `soft_shadows_enabled` and `radius` (upstream takes the size from the
   radius, which its lighting also reads). A light not in the map is upstream's.
+- **ALCS unready casters**, marked `NVForever ALCS unready casters`, in
+  `src/render/light.rs`: `queue_shadows` counts, for each point or spot light view drawn
+  this frame while the hold is active, the casters it could not queue or that will be
+  skipped when drawn (not specialized though a caster to be, `nvf_caster_to_be`; no mesh
+  instance, prepared material or mesh slabs; a pipeline not built yet), and notes whether
+  any pipeline is being built (`PipelineCache::waiting_pipelines`). Lights with either are
+  kept for the game in `NVF_UNREADY` (`nvf_take_unready_shadow_lights`: light, casters,
+  building). Upstream draws such a view again next frame and the caster appears; a light
+  the game holds is not drawn again unless the game marks it.
 - **ALCS quiet static draws**, marked `NVForever ALCS quiet static draws`, in
   `src/render/light.rs`: `HoldLightShadowMaps::static_quiet` (bits per cube face, within
   `to_static`) and `NvfStaticShadowFace::quiet`. A quiet face is drawn into the static

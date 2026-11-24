@@ -3422,7 +3422,7 @@ pub fn queue_shadows(
     mut shadow_render_phases: ResMut<ViewBinnedRenderPhases<Shadow>>,
     gpu_preprocessing_support: Res<GpuPreprocessingSupport>,
     mesh_allocator: Res<MeshAllocator>,
-    view_light_entities: Query<(&LightEntity, &ExtractedView, &RenderLayers)>,
+    view_light_entities: Query<(&LightEntity, &ExtractedView, &RenderLayers, Has<RootNonCameraView>)>,
     shadow_map_visible_entities_query: Query<&RenderShadowMapVisibleEntities>,
     specialized_material_pipeline_cache: Res<SpecializedShadowMaterialPipelineCache>,
     mut pending_shadow_queues: ResMut<PendingShadowQueues>,
@@ -3431,17 +3431,24 @@ pub fn queue_shadows(
     // NVForever kept shadow phases: the views resumed this frame, and the entities to queue.
     nvf_parked: Option<Res<NvfParkedShadowViews>>,
     mut nvf_items: Local<Vec<(Entity, MainEntity)>>,
+    // NVForever ALCS unready casters: whether pipelines are still being built.
+    nvf_pipeline_cache: Res<PipelineCache>,
 ) {
     let (mut nvf_resynced, mut nvf_rebinned) = (0u64, 0u64);
+    // NVForever ALCS unready casters: a pipeline still being built anywhere may be one a
+    // caster already binned waits for (it is skipped when drawn, and nothing tells).
+    let nvf_building = nvf_pipeline_cache.waiting_pipelines().next().is_some();
     // NVForever kept shadow phases: only while the game's hold keeps them.
     let nvf_parked = nvf_parked.filter(|parked| parked.active);
     let nvf_guard = nvf_parked.is_some();
-    for (light_entity, extracted_view_light, view_light_render_layers) in &view_light_entities {
+    for (light_entity, extracted_view_light, view_light_render_layers, nvf_root) in &view_light_entities {
         let Some(shadow_phase) =
             shadow_render_phases.get_mut(&extracted_view_light.retained_view_entity)
         else {
             continue;
         };
+        // NVForever ALCS unready casters: casters of this view that cannot be drawn yet.
+        let mut nvf_unready = 0u32;
 
         let Some(view_specialized_material_pipeline_cache) =
             specialized_material_pipeline_cache.get(&extracted_view_light.retained_view_entity)
@@ -3512,6 +3519,14 @@ pub fn queue_shadows(
             let Some(&(pipeline_id, draw_function, is_depth_only_opaque)) =
                 view_specialized_material_pipeline_cache.get(main_entity)
             else {
+                // NVForever ALCS unready casters: not specialized, for its mesh or its
+                // material is not there yet (one that casts no shadows never is).
+                nvf_unready += u32::from(nvf_guard && nvf_caster_to_be(
+                    *main_entity,
+                    &render_mesh_instances,
+                    &render_material_instances,
+                    &render_materials,
+                ));
                 continue;
             };
 
@@ -3523,6 +3538,7 @@ pub fn queue_shadows(
                 view_pending_shadow_queues
                     .current_frame
                     .insert((*render_entity, *main_entity));
+                nvf_unready += 1;
                 continue;
             };
             if !mesh_instance
@@ -3551,14 +3567,19 @@ pub fn queue_shadows(
                     view_pending_shadow_queues
                         .current_frame
                         .insert((*render_entity, *main_entity));
+                    nvf_unready += 1;
                     continue;
                 };
                 Some(material.binding.group.0)
             };
 
             let Some(mesh_slabs) = mesh_allocator.mesh_slabs(&mesh_instance.mesh_asset_id()) else {
+                nvf_unready += 1;
                 continue;
             };
+            // NVForever ALCS unready casters: binned, but skipped when drawn until its
+            // pipeline is built.
+            nvf_unready += u32::from(nvf_guard && nvf_pipeline_cache.get_render_pipeline(pipeline_id).is_none());
 
             let batch_set_key = ShadowBatchSetKey {
                 pipeline: pipeline_id,
@@ -3584,9 +3605,60 @@ pub fn queue_shadows(
                 ),
             ));
         }
+        // NVForever ALCS unready casters: a point or spot light's view drawn this frame
+        // without all of its casters is told to the game.
+        if nvf_guard && nvf_root && (nvf_unready > 0 || nvf_building) && !matches!(light_entity, LightEntity::Directional { .. }) {
+            nvf_report_unready(extracted_view_light.retained_view_entity.main_entity.id(), nvf_unready, nvf_building);
+        }
     }
     nvf_event(NVF_RESYNCED, nvf_resynced);
     nvf_event(NVF_REBINNED, nvf_rebinned);
+}
+
+/// NVForever ALCS unready casters (2026-11-24): whether an entity a light sees, not yet
+/// specialized for its shadow views, is a caster to be: its mesh or its material is not in
+/// the render world yet, or both are and it casts (its mesh is then still being uploaded).
+fn nvf_caster_to_be(
+    main_entity: MainEntity,
+    render_mesh_instances: &RenderMeshInstances,
+    render_material_instances: &RenderMaterialInstances,
+    render_materials: &ErasedRenderAssets<PreparedMaterial>,
+) -> bool {
+    let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(main_entity) else {
+        return true;
+    };
+    if !mesh_instance.flags().contains(RenderMeshInstanceFlags::SHADOW_CASTER) {
+        return false;
+    }
+    match render_material_instances.instances.get(&main_entity) {
+        None => true,
+        Some(instance) => render_materials
+            .get(instance.asset_id)
+            .is_none_or(|material| material.properties.shadows_enabled),
+    }
+}
+
+/// NVForever ALCS unready casters: the lights (main world entities) whose shadow views were
+/// drawn while casters of theirs could not be (a mesh or a material not loaded, a pipeline
+/// still being built), with how many and whether any pipeline was being built then, since
+/// the game last took them. Bevy draws such a view
+/// again next frame and the caster appears; a light the game holds is not drawn again, so
+/// the game asks and marks it ([`nvf_take_unready_shadow_lights`]).
+static NVF_UNREADY: std::sync::Mutex<Vec<(Entity, u32, bool)>> = std::sync::Mutex::new(Vec::new());
+
+fn nvf_report_unready(light: Entity, casters: u32, building: bool) {
+    if let Ok(mut unready) = NVF_UNREADY.lock() {
+        // The game takes them every frame while its lamps cast; never without bound.
+        if unready.len() >= 4096 {
+            unready.clear();
+        }
+        unready.push((light, casters, building));
+    }
+}
+
+/// NVForever ALCS unready casters: take what [`NVF_UNREADY`] holds.
+pub fn nvf_take_unready_shadow_lights() -> Vec<(Entity, u32, bool)> {
+    NVF_UNREADY.lock().map(|mut unready| core::mem::take(&mut *unready)).unwrap_or_default()
 }
 
 pub struct Shadow {

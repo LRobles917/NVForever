@@ -2219,6 +2219,26 @@ occlusion is left on the ambient term alone; its radius is capped at 80 render p
 5% of the distance at 4K; a casting placed spot lamp would dim first-person arms as the
 flashlight does (none seen cast in the scenes run).
 
+**Casters not ready** (same day; the owner: the shadows "load very slow, sometimes taking
+up to 30 secs" after entering an interior, a load or a new game, and switching the row
+"sometimes causes them to not load correctly"). A light's maps are drawn once and held; a
+caster whose mesh or material was still loading, or whose shadow pipeline was still being
+built, was not in them, and nothing drew the light again until the periodic refresh (3,600
+frames: 24 s at 150 frames a second; 600 before the rewrite, which hid it). Loading the
+owner's save, the room's furniture cast no lamp shadow in pictures at 0.5 to 16 s and did at
+24 s. Now the renderer tells the game which lights' views were drawn without all their
+casters (`bevy::pbr::nvf_take_unready_shadow_lights`), and the game draws those lights
+again in full, a little later each time (`SETTLE_FRAMES`) and every 48 frames while
+pipelines are being built (`BUILD_WAIT`, a first run with a new picture mode); the loading
+screen's pre-draw waits for it within its cap. The same save: the shadows are in the picture
+at 0.5 s, the screen no longer up (1.8 s); a first run with SMAA or 8x multisampling, never
+run before, has them at 1 s. Checked with and without upscaling on that save, the
+occlusion and ALCS on Quality: no anti-aliasing, 4x multisampling, TAA, SMAA, FSR 3.1 and
+DLSS, each without an error and with the shadows and the occlusion in the picture; the row
+switched Off, Quality, Performance and Quality again mid-game, and the occlusion Off and
+on, each back within a second. The occlusion alone does not change between 0.5 and 26 s
+after a load: it was the lamps' shadows that came late.
+
 Measured 2026-11-24 (RTX 5090, 4K DLSS Quality, frame generation 2x, the owner's INI): Doc
 Mitchell's opening, 25 lights casting, 1.7 lights switched on and 3.4 faces composited a
 frame, `prepare_lights` 0.04 ms, the game's systems 0.04 ms, shadow views 0.1-0.2 ms of GPU

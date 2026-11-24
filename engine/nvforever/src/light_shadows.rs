@@ -39,6 +39,12 @@
 //!   under the shadow biases ([`DEPTH_BIAS`]): a caster never stands in the shadow of where
 //!   its map still shows it. Every light is redrawn in full every [`Tuning::refresh`] frames
 //!   anyway, each at its own time.
+//! - **Casters not ready** ([`SETTLE_FRAMES`], [`BUILD_WAIT`]). A light whose maps were
+//!   drawn while a caster's mesh or material was still loading, or its shadow pipeline still
+//!   being built (the patched renderer tells, `bevy::pbr::nvf_take_unready_shadow_lights`:
+//!   engine/vendor/README.md "ALCS unready casters"), draws again in full a little later,
+//!   and again while the renderer says so. Until 2026-11-24 only the refresh did: after a
+//!   load a room's furniture cast no shadow for up to 24 s.
 //! - **In the frame it changed** (the rewrite of 2026-11-24, [design, owner's playtest: "the
 //!   shadows do not update real time"]). A light with marked faces in view is switched on to
 //!   draw them in that frame, up to [`Tuning::draws`] lights a frame: those that never drew
@@ -249,6 +255,33 @@ pub const NEAR_Z: f32 = 8.0;
 /// marked nothing, and a talking actor leaning back a few units went dark in its own old
 /// shadow until the box changed (playtest videos 2026-11-24, Doc Mitchell)].
 pub const MOVE_EPS: f32 = 0.5;
+
+/// A light whose maps were drawn while casters of its could not be drawn yet (a mesh or a
+/// material still loading, a shadow pipeline still being built: the renderer's word,
+/// `bevy::pbr::nvf_take_unready_shadow_lights`) draws again in full this many frames
+/// later, and again while the renderer says so, each time after the next wait; a change
+/// in how many are missing starts over. After the last it is left to [`Tuning::refresh`]
+/// [engineering choice, 2026-11-24: about 20 s at 150 frames a second in all, for a first
+/// run with a new picture mode, whose pipelines are built for seconds. Until then
+/// nothing drew such a light again: a room's furniture, loaded a moment after the lamps'
+/// maps were drawn under the loading screen, cast no shadow until the refresh, 24 s later
+/// (the owner's save, loaded: pictures at 0.5 to 42 s)].
+pub const SETTLE_FRAMES: [u64; 10] = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 1024];
+
+/// While pipelines are still being built (a first run with a new picture mode builds them
+/// for many seconds) a light drawn with no caster known missing draws again every this
+/// many frames, at most [`BUILD_WAITS`] times: a caster binned earlier may wait for one of
+/// them, and nothing tells which [engineering choice: with [`SETTLE_FRAMES`] alone the
+/// furniture's shadows were still missing 12 s into a first run with MSAA, TAA or FSR].
+pub const BUILD_WAIT: u64 = 48;
+pub const BUILD_WAITS: u8 = 80;
+
+/// The frame a light told unready at `frame` draws again, and its next step; `None` once
+/// the steps are spent. Under a loading screen (`predraw`) at once: the screen waits for it.
+pub fn settle_after(frame: u64, step: u8, predraw: bool) -> Option<(u64, u8)> {
+    let wait = *SETTLE_FRAMES.get(usize::from(step))?;
+    Some((frame + if predraw { 2 } else { wait }, step + 1))
+}
 
 /// The casting lights' shadow biases: `DEPTH_BIAS` game units towards the light (about
 /// 1.4 cm), and `NORMAL_BIAS` map texels along the surface normal (Bevy scales it by the
@@ -619,6 +652,13 @@ struct LampState {
     dynamic_faces: u8,
     /// Frames its marked faces in view have waited for a draw ([`draw_priority`]).
     waiting: u32,
+    /// Casters the renderer could not draw into its maps at its last draw, the frame it
+    /// draws again in full for them (0: none due) and how often it has ([`SETTLE_FRAMES`]).
+    unready: u32,
+    settle_at: u64,
+    settle_step: u8,
+    /// Redraws while pipelines were being built ([`BUILD_WAITS`]).
+    build_waits: u8,
     /// The faces it was told to draw this frame, and whether that was its first draw: given
     /// back in [`skip_fixtures`] when the camera lost sight of the light this frame and the
     /// renderer drew nothing ([`Pass::lost`]).
@@ -724,6 +764,12 @@ pub struct Pass {
     /// were spent), summed over the frames, and the longest any waited, in frames.
     pub waited: u64,
     pub waited_longest: u32,
+    /// Full redraws of lights whose maps were drawn without all their casters
+    /// ([`SETTLE_FRAMES`]).
+    pub settled: u64,
+    /// The renderer's reports behind them: views drawn with casters missing, and views
+    /// drawn with none missing while a pipeline was being built.
+    pub unready: [u64; 2],
     /// Lights pre-drawn under loading screens that came down since the last summary.
     pub predrawn: u64,
 }
@@ -988,7 +1034,7 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
     let on = |b: bool| if b { "on" } else { "OFF" };
     let [served, candidates, filed, everywhere] = p.grid;
     format!(
-        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame; face culling ({}) {:.2} marked faces held out of view a frame; static cache ({}) {:.2} static redraws (faces) a frame, {:.2} dynamic recomposites a frame, {:.2} layer copies a frame, {} faces put back after a static redraw, {} of them drawn quietly, {} shapes became dynamic, {} draws lost out of view; {:.2} marked lights waited a frame for a draw, the longest {} frames; loading-screen pre-draw ({}) {} lights",
+        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame; face culling ({}) {:.2} marked faces held out of view a frame; static cache ({}) {:.2} static redraws (faces) a frame, {:.2} dynamic recomposites a frame, {:.2} layer copies a frame, {} faces put back after a static redraw, {} of them drawn quietly, {} shapes became dynamic, {} draws lost out of view; {:.2} marked lights waited a frame for a draw, the longest {} frames; {} redraws for casters not ready ({} views drawn with casters missing, {} while a pipeline was built); loading-screen pre-draw ({}) {} lights",
         per(p.steps[0]),
         per(p.steps[1]),
         per(p.steps[2]),
@@ -1014,6 +1060,9 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
         p.lost,
         per(p.waited),
         p.waited_longest,
+        p.settled,
+        p.unready[0],
+        p.unready[1],
         on(predraw_on()),
         p.predrawn
     )
@@ -1636,6 +1685,10 @@ fn shadow_lights(
             quiet: 0,
             dynamic_faces: 0,
             waiting: 0,
+            unready: 0,
+            settle_at: 0,
+            settle_step: 0,
+            build_waits: 0,
             drew: 0,
             drew_fresh: false,
         });
@@ -1921,6 +1974,35 @@ fn shadow_lights(
             state.causes[2] += 1;
         }
     }
+    // Lights whose maps were drawn without all their casters (the renderer's word, a frame
+    // or two after the draw) draw again in full, a little later each time.
+    for (e, casters, building) in bevy::pbr::nvf_take_unready_shadow_lights() {
+        state.pass.unready[usize::from(casters == 0 && building)] += 1;
+        let Some(s) = state.lamps.get_mut(&e).filter(|s| !s.transient) else { continue };
+        if casters == 0 {
+            // None known missing, but pipelines are being built.
+            if building && s.settle_at == 0 && s.build_waits < BUILD_WAITS {
+                // Under a loading screen sooner (the screen waits), but not every frame:
+                // each is a full redraw of the light, and the pipelines take seconds.
+                (s.settle_at, s.build_waits) = (frame + if predraw { BUILD_WAIT / 4 } else { BUILD_WAIT }, s.build_waits + 1);
+            }
+            continue;
+        }
+        if casters != s.unready {
+            (s.unready, s.settle_step) = (casters, 0);
+        }
+        if s.settle_at == 0 {
+            if let Some((at, step)) = settle_after(frame, s.settle_step, predraw) {
+                (s.settle_at, s.settle_step) = (at, step);
+            }
+        }
+    }
+    for s in state.lamps.values_mut() {
+        if s.settle_at != 0 && frame >= s.settle_at {
+            (s.settle_at, s.dirty, s.static_dirty) = (0, ALL_FACES, ALL_FACES);
+            state.pass.settled += 1;
+        }
+    }
     // The light moved past LIGHT_MOVE_EPS, or its turn for a full redraw came.
     for l in &lamps {
         if let (Some(s), Some(tune)) = (state.lamps.get_mut(&l.entity), tune) {
@@ -2084,7 +2166,7 @@ fn shadow_lights(
     // PREDRAW_CAP_SECS. When the screen comes down, what was pre-drawn is logged.
     let busy = predraw && {
         let drew = lamps.iter().any(|l| !l.transient && drawing.contains_key(&l.entity));
-        let waiting = lamps.iter().any(|l| !l.transient && state.lamps.get(&l.entity).is_some_and(|s| s.fresh || s.dirty != 0));
+        let waiting = lamps.iter().any(|l| !l.transient && state.lamps.get(&l.entity).is_some_and(|s| s.fresh || s.dirty != 0 || s.settle_at != 0));
         predraw_busy(drew, waiting, state.predraw.began.map_or(0.0, |b| time.elapsed_secs() - b))
     };
     if let Some(loading) = loading.as_mut() {
@@ -2523,6 +2605,19 @@ mod tests {
     }
 
     #[test]
+    fn a_light_drawn_without_all_its_casters_draws_again_a_little_later_each_time() {
+        assert_eq!(settle_after(100, 0, false), Some((104, 1)));
+        assert_eq!(settle_after(100, 1, false), Some((108, 2)));
+        assert_eq!(settle_after(100, 7, false), Some((612, 8)));
+        assert_eq!(settle_after(100, 9, false), Some((1124, 10)));
+        assert_eq!(settle_after(100, 10, false), None, "then the refresh");
+        assert_eq!(settle_after(100, 3, true), Some((102, 4)), "under a loading screen at once");
+        // All of it is over well before the refresh comes.
+        let all: u64 = SETTLE_FRAMES.iter().sum();
+        assert!(all < tuning(2).unwrap().refresh && all > 600, "{all}");
+    }
+
+    #[test]
     fn marked_lights_take_turns_by_how_long_they_waited() {
         // Five lights marked every frame, two draws a frame: each draws within three frames.
         let mut waiting = [0u32; 5];
@@ -2728,6 +2823,10 @@ mod tests {
             quiet: 0,
             dynamic_faces: 0,
             waiting: 0,
+            unready: 0,
+            settle_at: 0,
+            settle_step: 0,
+            build_waits: 0,
             drew: 0,
             drew_fresh: false,
         }
@@ -2859,6 +2958,8 @@ mod tests {
             lost: 1,
             waited: 25,
             waited_longest: 3,
+            settled: 6,
+            unready: [9, 2],
             predrawn: 7,
         };
         let s = pass_summary(&p, 100);
@@ -2868,7 +2969,7 @@ mod tests {
         assert!(s.contains("distance fade (on) 2.5 lights fading a frame"), "{s}");
         assert!(s.contains("face culling (on) 0.30 marked faces held out of view a frame;"), "{s}");
         assert!(
-            s.contains("static cache (on) 0.12 static redraws (faces) a frame, 0.40 dynamic recomposites a frame, 0.52 layer copies a frame, 5 faces put back after a static redraw, 4 of them drawn quietly, 2 shapes became dynamic, 1 draws lost out of view; 0.25 marked lights waited a frame for a draw, the longest 3 frames;"),
+            s.contains("static cache (on) 0.12 static redraws (faces) a frame, 0.40 dynamic recomposites a frame, 0.52 layer copies a frame, 5 faces put back after a static redraw, 4 of them drawn quietly, 2 shapes became dynamic, 1 draws lost out of view; 0.25 marked lights waited a frame for a draw, the longest 3 frames; 6 redraws for casters not ready (9 views drawn with casters missing, 2 while a pipeline was built);"),
             "{s}"
         );
         assert!(s.ends_with("loading-screen pre-draw (on) 7 lights"), "{s}");

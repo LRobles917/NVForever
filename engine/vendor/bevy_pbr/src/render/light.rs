@@ -2120,6 +2120,9 @@ pub fn prepare_lights(
                     if !nvf_remake {
                         commands.entity(view).insert(RootNonCameraView(Core3d.intern()));
                     }
+                    // NVForever ALCS quiet static draws: only a layer that already holds
+                    // this light's map may be left as it is.
+                    let nvf_had_map = nvf_light_record.point.get(&layer) == Some(&drawn_with);
                     nvf_light_record.point.insert(layer, drawn_with);
                     // NVForever static shadow cache: how this face is drawn.
                     let bit = 1u8 << face;
@@ -2136,12 +2139,16 @@ pub fn prepare_lights(
                                 nvf_light_record.static_point.insert(layer, (*light_main_entity, cache_id));
                                 nvf_event(NVF_STATIC_DRAWS, 1);
                                 let attachment = nvf_static_layer_attachment(&mut nvf_cache.static_layers, &cache.texture, layer, true);
-                                Some(NvfStaticShadowFace { attachment, copy, after: true })
+                                // NVForever ALCS quiet static draws: a face in
+                                // `static_quiet` is not copied out; the game composites
+                                // it next, so its moving casters never leave the picture.
+                                let quiet = nvf_had_map && hold.static_quiet.get(&main_id).copied().unwrap_or(0) & bit != 0;
+                                Some(NvfStaticShadowFace { attachment, copy, after: true, quiet })
                             } else if nvf_light_record.static_point.get(&layer) == Some(&(*light_main_entity, cache_id)) {
                                 // Copied in from the cache first, then drawn over (loaded).
                                 nvf_event(NVF_STATIC_COMPOSITES, 1);
                                 let attachment = nvf_static_layer_attachment(&mut nvf_cache.load_layers, &point_light_depth_texture.texture, layer, false);
-                                Some(NvfStaticShadowFace { attachment, copy, after: false })
+                                Some(NvfStaticShadowFace { attachment, copy, after: false, quiet: false })
                             } else {
                                 // The cache's layer holds no static map of this light: drawn
                                 // as ever (with only the casters the game left in its list).
@@ -3849,6 +3856,11 @@ pub struct HoldLightShadowMaps {
     pub static_cache: bool,
     pub to_static: EntityHashMap<u8>,
     pub on_static: EntityHashMap<u8>,
+    /// NVForever ALCS quiet static draws (2026-11-24): of the faces in `to_static`, those
+    /// drawn into the cache without the copy into the sampled layer after. The game asks
+    /// for it where moving casters stand in the face: the copy would show the face without
+    /// them for a frame; it composites the face in the next frame instead.
+    pub static_quiet: EntityHashMap<u8>,
 }
 
 /// NVForever static shadow cache: one layer copied between the cache texture and the
@@ -3891,6 +3903,9 @@ pub struct NvfStaticShadowFace {
     pub attachment: DepthStencilViewAttachment,
     pub copy: NvfLayerCopy,
     pub after: bool,
+    /// NVForever ALCS quiet static draws: drawn into the cache and not copied out; the
+    /// sampled layer keeps its picture until the game composites the face.
+    pub quiet: bool,
 }
 
 /// NVForever static shadow cache: the attachment of one layer of `texture`, kept in
@@ -4443,7 +4458,7 @@ fn view_shadow_pass<const IS_LATE: bool>(
     // NVForever static shadow cache: a face drawn into the cache has its layer copied into
     // the sampled texture once drawn, after its last pass (the late one only with occlusion
     // culling, which the light views do not have).
-    if let Some(face) = nvf_static_face.filter(|f| f.after && (IS_LATE || !occlusion_culling)) {
+    if let Some(face) = nvf_static_face.filter(|f| f.after && !f.quiet && (IS_LATE || !occlusion_culling)) {
         drop(render_pass);
         face.copy.record(ctx.command_encoder());
     }

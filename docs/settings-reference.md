@@ -1144,31 +1144,33 @@ below cover them all.
   shadows off too.
 - Command-line switches: `--graphics`, `--graphics-only`
 - More: docs/design/terrain-shadows.md, docs/design/sun-visibility.md
-### `light-shadows`: ALC shadows
+### `light-shadows`: ALCS (Experimental)
 
-- On the page: ALC (All Lights Cast): lamps, fires and spot lights cast shadows in the
-  shadow distance; Performance redraws less often. Costs frame rate. Not in the original.
-- In full: ALC stands for All Lights Cast; the row was called Lamp shadows until 2026-11-19.
-  The INI key `light-shadows`, the switch `--light-shadows` and the log lines starting
-  `light shadows:` keep the old name, so saved settings, scripts and the smoke scenarios go
-  on working. Off (the default), Performance or Quality, as Sun shadows. Every drawn placed
-  light whose light reaches within the sun's shadow distance (the Shadow distance and
-  Longer sun shadows rows) casts, nearest first, up to 32 lights on Quality and 16 on
-  Performance; grass fires' lights and lights a script attached count among them. Muzzle
-  flashes and explosions cast too, apart from them: the nearest whose light reaches within
-  3,000 units (about 43 m) and into view, 2 at once on Quality and 1 on Performance, each
-  drawn in the frame it appears. A light's maps are drawn when it starts casting and then
-  kept; a part of them is drawn again only when something there moved more than about 6 cm,
-  appeared or vanished, all of them once the light itself moved about 11 cm. At most 3 lights redraw in a frame on Quality, 1 on Performance, nearer ones
-  every frame (every 2nd on Performance), farther ones every 2nd (every 4th), so a moving
-  thing's shadow from a lamp can lag a frame. The world and your body cast, the first-person arms
-  do not; what lies within 8 units of a light casts nothing from it, and lamp housings,
-  shades and bulbs cast none from their own light. Quality also gives the shadows soft edges (sharp
-  where a thing touches the surface, softer away from it) and, while TAA, FSR or DLSS is
-  on, small contact shadows where things touch. A point light's maps
-  are 512² with Shadow resolution 2048, 1024² with 4096. Under a loading screen every
-  casting light's maps are drawn before play, those in view first, within 3 seconds. The
-  flashlight casts as before.
+- On the page: ALCS (All Lights Cast Shadows): lamps, fires and spot lights cast shadows,
+  so walls stop their light. Performance: fewer lights, hard edges. Experimental. Costs
+  frame rate. Not in the original.
+- In full: ALCS stands for All Lights Cast Shadows; the row was called ALC shadows until
+  2026-11-24 and Lamp shadows until 2026-11-19. The INI key `light-shadows`, the switch
+  `--light-shadows` and the log lines starting `light shadows:` keep the old name, so saved
+  settings, scripts and the smoke scenarios go on working. Off (the default), Performance
+  or Quality, as Sun shadows. Every drawn placed light whose light reaches within the sun's
+  shadow distance (the Shadow distance and Longer sun shadows rows) casts, nearest first,
+  up to 32 lights on Quality and 16 on Performance; grass fires' lights and lights a script
+  attached count among them. Muzzle flashes and explosions cast too, apart from them: the
+  nearest whose light reaches within 3,000 units (about 43 m) and into view, 2 at once on
+  Quality and 1 on Performance, each drawn in the frame it appears. A light's maps are
+  drawn when it starts casting and then kept; a part of them is drawn again in the frame
+  something there moved more than about 7 mm (a shape, or any joint of an actor), appeared
+  or vanished, all of them once the light itself moved that far. Up to 8 lights redraw in
+  a frame on Quality, 3 on Performance, those that waited longest first, so a moving
+  thing's shadow moves with it. The world and your body cast, the first-person arms do
+  not; what lies within 8 units of a light casts nothing from it, and lamp housings, shades
+  and bulbs cast none from their own light. Quality also gives the point lights' shadows
+  soft edges (sharp where a thing touches the surface, softer away from it) and, while TAA,
+  FSR or DLSS is on, small contact shadows where things touch. A point light's maps are
+  512² with Shadow resolution 2048, 1024² with 4096. Under a loading screen every casting
+  light's maps are drawn before play, those in view first, within 3 seconds. The flashlight
+  casts as before.
   The original's placed lights cast none [design].
 - A list kept in the INI by name (`Off`, `Performance`, `Quality`).
 - Command-line switches: `--light-shadows`

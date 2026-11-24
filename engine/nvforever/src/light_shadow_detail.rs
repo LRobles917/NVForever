@@ -3,11 +3,18 @@
 //! shadows"). Both only on Quality [engineering choice: each costs per pixel and per
 //! light; Performance keeps the hard edges of the camera's shadow filter].
 //!
-//! - **Soft edges**: every casting light (`CastingLight`) takes Bevy's percentage-closer
-//!   soft shadows (`soft_shadows_enabled`, the `experimental_pbr_pcss` feature) with a
-//!   light size of [`SOFT_RADIUS`] (an explosion's [`BLAST_RADIUS`]): sharp where a shape
-//!   meets the surface its shadow falls on, softer further away, as a lamp's are. The
-//!   light's `radius` is that size; its lighting barely changes at a few units.
+//! - **Soft edges**: every casting point light (`CastingLight`) takes percentage-closer soft
+//!   shadows (`soft_shadows_enabled`, the `experimental_pbr_pcss` feature for its samplers)
+//!   with a light size of [`SOFT_RADIUS`] (an explosion's [`BLAST_RADIUS`]): sharp where a
+//!   shape meets the surface its shadow falls on, softer further away, as a lamp's are. The
+//!   light's `radius` is that size; its lighting barely changes at a few units. The filter
+//!   is the patched renderer's own (bevy_pbr shadow_sampling.wesl
+//!   `nvf_sample_shadow_cubemap_soft`, engine/vendor/README.md "ALCS soft shadows"): the
+//!   blocker search and the penumbra in world units, each tap compared against the
+//!   fragment's own surface. Bevy's takes the light's size as a plain number, a fraction of
+//!   a metre in mind: with the game's units its search swept most of the cube and every lit
+//!   surface shadowed itself in stripes (playtest 2026-11-24). Spot lamps keep the camera's
+//!   shadow filter (Bevy's soft shadows for them have the same fault).
 //! - **Contact shadows**: the world camera takes Bevy's `ContactShadows` (a ray march
 //!   along the depth buffer towards each light, [`CONTACT`]), and every drawn placed light,
 //!   grass fire and attached light within the sun's shadow distance has
@@ -150,8 +157,12 @@ fn soften(settings: Res<LightShadows>, hold: Res<HoldLightShadowMaps>, mut light
                 }
             }
             (None, Some(mut s)) => {
+                // Point lights only: the lamps' soft shadows are the patched renderer's
+                // own (bevy_pbr `nvf_sample_shadow_cubemap_soft`, world units). Bevy's for
+                // a spot light take the size as a plain number, as its point lights' did
+                // (stripes, 2026-11-24): a spot lamp keeps the camera's shadow filter.
                 let l = s.bypass_change_detection();
-                if apply_soft(&mut l.soft_shadows_enabled, &mut l.radius, soft, size, &mut own) {
+                if apply_soft(&mut l.soft_shadows_enabled, &mut l.radius, false, size, &mut own) {
                     s.set_changed();
                 }
             }

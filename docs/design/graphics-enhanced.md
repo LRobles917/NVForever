@@ -2181,9 +2181,34 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
   (1920x1080): from the air over Goodsprings at 12:00 looking north-east, at 18:30 west,
   at 06:30 east, under the overcast and the hazy weather, and the street, in the PR. The
   cost is not measured on a slower GPU or at 1920x1080.
-### 3.17 ALC shadows (`light-shadows`; off by default, not part of `enhanced`)
+### 3.17 ALCS (Experimental) (`light-shadows`; off by default, not part of `enhanced`)
 
-**Name.** ALC stands for All Lights Cast. The row was called Lamp shadows until
+**Name.** ALCS stands for All Lights Cast Shadows; the row is ALCS (Experimental) since
+2026-11-24 (ALC shadows before; "ALC shadows" below is the same row).
+
+**Rewrite of 2026-11-24** (owner's playtest, two videos and two pictures of Doc Mitchell's
+house: stripes over lit walls and faces, an actor going dark and back every few seconds, a
+carried gourd's shadow left on the wall; "the shadows do not update real time"). Causes
+found and what replaced them (light_shadows.rs, light_shadow_detail.rs, the patched
+bevy_pbr):
+
+| Fault | Cause | Now |
+|---|---|---|
+| Stripes on lit surfaces | Bevy's point-light soft shadows scale the blocker search and the filter by the light's size as a plain number (a fraction of a metre in mind); with a lamp size of 24 game units the search swept most of the cube and the filter grew to many texels, each tap compared against the fragment's one depth. The depth bias (0.08, a length in world units) was a millimetre. | The renderer's own soft shadows in world units, each tap compared against the fragment's surface along it (`nvf_sample_shadow_cubemap_soft`); biases of 1 unit and 1 texel (`DEPTH_BIAS`, `NORMAL_BIAS`). Spot lamps keep the camera's filter. |
+| An actor goes dark, then pops back | A skeleton marked the lamps only when the box round all its joints changed by 4 units; a leaning or gesturing actor stood in the shadow of its old pose until then, or until the periodic refresh (600 frames, 4 s at 150 fps). | Any joint moving 0.5 units marks (`MOVE_EPS`, under the bias); shapes by centre and corner. |
+| Shadows lag or stay behind | Lights took turns (every frame, or every 2nd or 4th), 3 a frame at most and the nearest always first, so with more marked lights than draws the rest never drew; any mesh despawned anywhere redrew every lamp near the camera in full; a shape with no record was baked into the static cache at its first move. | Every marked face in view draws in its frame, 8 lights a frame on Quality and 3 on Performance, the longest wait first (`draw_priority`); every caster's place is kept from the switch-on (`ShapeAt`), so one that goes or first moves marks exactly the faces it was in. |
+| Shadows blink at a cache redraw | A face drawn into the static cache was copied out without its moving casters, which came back a frame or more later. | Such a face is drawn quietly (`HoldLightShadowMaps::static_quiet`) and composited next frame; a due composite goes before another cache redraw. |
+| Static shadows missing after a turn of the view | A light told to draw on last frame's visibility and lost from view this frame counted as drawn. | `skip_fixtures` marks it again (`Pass::lost`). |
+
+Measured 2026-11-24 (RTX 5090, 4K DLSS Quality, frame generation 2x, the owner's INI): Doc
+Mitchell's opening, 25 lights casting, 1.7 lights switched on and 3.4 faces composited a
+frame, `prepare_lights` 0.04 ms, the game's systems 0.04 ms, shadow views 0.1-0.2 ms of GPU
+time, no light waited a frame; Novac at night walking, 14 lights, 1-2 lights and 1.5-6.2
+faces a frame, none waited. The eight `light-shadows*` smoke scenarios pass. Not done: the
+cube texture can still be made anew unseen by another shadowed point light taking a slot
+past the lamps' room (a menu scene's), which costs the lamps their maps until they redraw.
+
+**Before.** The row was called Lamp shadows until
 2026-11-19 (renamed, [design, #3074]); the INI key `light-shadows`, the switch
 `--light-shadows`, the log lines starting `light shadows:` and the smoke scenarios'
 `light-shadows-*` names keep the old name, so saved settings and the scenarios still match.

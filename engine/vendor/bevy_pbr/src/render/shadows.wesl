@@ -4,6 +4,7 @@ import package::render::{
     shadow_sampling::{
         SPOT_SHADOW_TEXEL_SIZE, sample_shadow_cubemap, sample_shadow_cubemap_pcss,
         sample_shadow_map, sample_shadow_map_pcss, nvf_spot_shadow_layer,
+        nvf_sample_shadow_cubemap_soft,
     }
 };
 
@@ -84,12 +85,15 @@ fn nvf_fetch_point_shadow_unfaded(
     // left-handed coordinate space, so we have to flip the z-axis when
     // sampling.
     if ((*light).soft_shadow_size > 0.0) {
-        return sample_shadow_cubemap_pcss(
-            frag_ls * flip_z,
-            distance_to_light,
-            depth,
-            light_id,
+        // NVForever ALCS soft shadows: the search and the filter in world units, each tap
+        // compared against the fragment's own surface along it (shadow_sampling.wesl
+        // `nvf_sample_shadow_cubemap_soft`), in place of `sample_shadow_cubemap_pcss`.
+        return nvf_sample_shadow_cubemap_soft(
+            frag_ls,
+            surface_normal,
+            (*light).light_custom_data,
             (*light).soft_shadow_size,
+            light_id,
             frag_coord_xy,
         );
     }

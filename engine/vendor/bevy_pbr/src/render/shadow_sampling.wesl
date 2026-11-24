@@ -618,3 +618,148 @@ fn sample_shadow_cubemap_pcss(
     return sample_shadow_cubemap_jittered(
         light_local, depth, frag_coord_xy, POINT_SHADOW_SCALE * blur_size, distance_to_light, light_id, false);
 }
+
+// NVForever ALCS soft shadows (2026-11-24): percentage-closer soft shadows of a point light
+// in world units, in place of `sample_shadow_cubemap_pcss` for the game's lamps. Bevy's
+// version scales its blocker search and its filter by the light's size as a plain number
+// (`scale * distance_to_light`, sizes of a fraction of a metre in mind) and compares
+// clip-space depths: with the game's units (a lamp's size is 24) the search swept most of
+// the cube and the filter grew to many texels, each tap compared against the one depth of
+// the fragment, so every surface at an angle to the light shadowed itself in stripes.
+//
+// Here everything is a distance from the light:
+// - `frag_ls`: from the light to the fragment, already offset by the light's biases;
+// - `normal`: the fragment's surface normal. A tap to the side of the fragment is compared
+//   against where the fragment's own surface (the plane through it) lies along that tap,
+//   not against the fragment's distance: a surface does not shadow itself however wide the
+//   filter or steep its angle to the light (a receiver-plane bias, exact for a flat one);
+// - `proj`: the light's `light_custom_data` (clip z and w from the major-axis distance);
+// - `light_size`: the light's radius, world units.
+// The search covers the light as seen from the fragment (`light_size / distance`), with a
+// tap at the fragment itself so a small thing next to its shadow is always found; the
+// filter's width is the penumbra of the blockers found, `light_size * (receiver - blocker)
+// / blocker`, never under a texel. The taps turn by a per-pixel angle, a new one each
+// frame while the view jitters (TAA, FSR, DLSS), which then smooth it.
+const NVF_SOFT_SEARCH_TAPS: u32 = 8u;
+const NVF_SOFT_FILTER_TAPS: u32 = 12u;
+// The widest search and filter, as tangents from the light (about 6 and 4 degrees).
+const NVF_SOFT_SEARCH_MAX: f32 = 0.1;
+const NVF_SOFT_FILTER_MAX: f32 = 0.07;
+const NVF_GOLDEN_ANGLE: f32 = 2.39996323;
+
+// The major-axis distance a clip-space depth of the light's projection stands for.
+fn nvf_point_shadow_major(depth: f32, proj: vec4<f32>) -> f32 {
+    let d = proj.x - depth * proj.y;
+    return (proj.z - depth * proj.w) / select(d, 1.0e-12, abs(d) < 1.0e-12);
+}
+
+// The clip-space depth of a major-axis distance.
+fn nvf_point_shadow_depth(major: f32, proj: vec4<f32>) -> f32 {
+    let zw = -major * proj.xy + proj.zw;
+    return zw.x / zw.y;
+}
+
+// How far from the light the fragment's own surface lies along a tap (`tap`: from the
+// light, world axes, any length), less a margin of `margin` texels (`texel`: a texel's
+// width as a tangent) for the compare's 2x2 footprint, wider on a slope. `plane` is
+// `dot(normal, frag_ls)`: negative where the surface faces the light. Kept within half and
+// twice the fragment's distance: a tap along the surface never reaches it.
+fn nvf_own_surface(tap: vec3<f32>, normal: vec3<f32>, plane: f32, receiver: f32, texel: f32, margin: f32) -> f32 {
+    var own = receiver;
+    var slope = 0.0;
+    if (plane < 0.0) {
+        let facing = dot(normal, tap) / length(tap);
+        own = select(2.0 * receiver, clamp(plane / (facing), 0.5 * receiver, 2.0 * receiver), facing < -1.0e-3);
+        slope = min(sqrt(max(1.0 - facing * facing, 0.0)) / max(-facing, 0.05), 4.0);
+    }
+    return own * (1.0 - margin * texel * (1.0 + slope));
+}
+
+fn nvf_sample_shadow_cubemap_soft(
+    frag_ls: vec3<f32>,
+    normal: vec3<f32>,
+    proj: vec4<f32>,
+    light_size: f32,
+    light_id: u32,
+    frag_coord_xy: vec2<f32>,
+) -> f32 {
+    let flip = vec3(1.0, 1.0, -1.0);
+    @if(NO_CUBE_ARRAY_TEXTURES_SUPPORT) {
+    let a = abs(frag_ls);
+    return sample_shadow_cubemap_hardware(frag_ls * flip, nvf_point_shadow_depth(max(a.x, max(a.y, a.z)), proj), light_id);
+    } @else {
+
+    let receiver = max(length(frag_ls), 1.0e-4);
+    // From the light to the fragment, world axes; the lookups flip z (cubemaps are
+    // left-handed), the fragment's plane is tested in world axes.
+    let dir = frag_ls / receiver;
+    let basis = orthonormalize(dir);
+    let plane = dot(normal, frag_ls);
+    let cube = nvf_point_shadow_cube(light_id);
+    let side = f32(textureDimensions(view_bindings::point_shadow_textures).x);
+    // A texel's width as a tangent from the light (a face spans 2 over its side).
+    let texel = 2.0 / side;
+
+    @if(TEMPORAL_JITTER)
+    let turn = 2.0 * PI * interleaved_gradient_noise(frag_coord_xy, view_bindings::globals.frame_count);
+    @else
+    let turn = 2.0 * PI * interleaved_gradient_noise(frag_coord_xy, 1u);
+
+    var filter_width = texel;
+    @if(PCSS_SAMPLERS_AVAILABLE) {
+    // 1. The blockers between the fragment and the light, over the light's width as the
+    // fragment sees it. Tap 0 is the fragment's own direction.
+    let search = clamp(light_size / receiver, 2.0 * texel, NVF_SOFT_SEARCH_MAX);
+    var blockers = vec2(0.0);
+    for (var i = 0u; i <= NVF_SOFT_SEARCH_TAPS; i += 1u) {
+        var off = vec2(0.0);
+        if (i > 0u) {
+            let r = sqrt((f32(i) - 0.5) / f32(NVF_SOFT_SEARCH_TAPS));
+            let angle = f32(i) * NVF_GOLDEN_ANGLE + turn;
+            off = vec2(cos(angle), sin(angle)) * r * search;
+        }
+        let tap = dir + basis[0] * off.x + basis[1] * off.y;
+        let sampled = textureSampleLevel(
+            view_bindings::point_shadow_textures,
+            view_bindings::point_shadow_textures_linear_sampler,
+            tap * flip,
+            cube,
+            0u,
+        );
+        let a = abs(tap);
+        // The blocker's distance from the light along this tap.
+        let blocker = nvf_point_shadow_major(sampled, proj) * length(tap) / max(a.x, max(a.y, a.z));
+        if (blocker < nvf_own_surface(tap, normal, plane, receiver, texel, 2.0)) {
+            blockers += vec2(blocker, 1.0);
+        }
+    }
+    if (blockers.y == 0.0) {
+        return 1.0;
+    }
+    let blocker = blockers.x / blockers.y;
+    filter_width = clamp(light_size * (receiver - blocker) / max(blocker * receiver, 1.0e-4), texel, NVF_SOFT_FILTER_MAX);
+    }
+
+    // 2. The share of the light that reaches the fragment's surface over the penumbra's
+    // width.
+    var lit = 0.0;
+    for (var i = 0u; i < NVF_SOFT_FILTER_TAPS; i += 1u) {
+        let r = sqrt((f32(i) + 0.5) / f32(NVF_SOFT_FILTER_TAPS));
+        let angle = f32(i) * NVF_GOLDEN_ANGLE + turn;
+        let off = vec2(cos(angle), sin(angle)) * r * filter_width;
+        let tap = dir + basis[0] * off.x + basis[1] * off.y;
+        let a = abs(tap);
+        let reference = nvf_own_surface(tap, normal, plane, receiver, texel, 1.5);
+        let major = reference * max(a.x, max(a.y, a.z)) / length(tap);
+        lit += textureSampleCompareLevel(
+            view_bindings::point_shadow_textures,
+            view_bindings::point_shadow_textures_comparison_sampler,
+            tap * flip,
+            cube,
+            nvf_point_shadow_depth(major, proj),
+        );
+    }
+    return lit / f32(NVF_SOFT_FILTER_TAPS);
+
+    }
+}

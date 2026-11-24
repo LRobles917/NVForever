@@ -669,6 +669,30 @@ Graphics pass 2026-11-23, four more changes:
   then only each batch set's own workgroups do work. [observed 2026-11-24, Novac 12:00,
   4K DLSS Quality, maxed settings] `uniform_allocation` 0.21 and `bin_unpacking` 0.20 ms
   a frame → both under 0.05; process CPU time 27.3 → 23.6 ms a frame.
+Two more for the ALCS row (the ALC shadows' rewrite, 2026-11-24;
+docs/design/graphics-enhanced.md §3.17 "Rewrite of 2026-11-24"):
+
+- **ALCS soft shadows**, marked `NVForever ALCS soft shadows`, in
+  `src/render/shadow_sampling.wesl` (`nvf_sample_shadow_cubemap_soft`,
+  `nvf_point_shadow_major`, `nvf_point_shadow_depth`, `nvf_own_surface`) and
+  `src/render/shadows.wesl` (the point light's soft branch calls it in place of
+  `sample_shadow_cubemap_pcss`). Percentage-closer soft shadows of a point light in world
+  units: the blocker search covers the light as the fragment sees it (`light_size /
+  distance`, a tap at the fragment itself and 8 round it), the filter (12 taps) is as wide as
+  the penumbra of the blockers found, never under a texel, and each tap is compared against
+  where the fragment's own surface (the plane through it, from the surface normal) lies
+  along that tap, less a texel-sized margin. The taps turn by a per-pixel angle, a new one
+  each frame under `TEMPORAL_JITTER`. Upstream's version scales the search and the filter
+  by the light's size as a plain number and compares every tap against the fragment's one
+  clip-space depth: with a light size in the game's units (24) every lit surface shadowed
+  itself in stripes. `sample_shadow_cubemap_pcss` is left as it is, unused by the game.
+- **ALCS quiet static draws**, marked `NVForever ALCS quiet static draws`, in
+  `src/render/light.rs`: `HoldLightShadowMaps::static_quiet` (bits per cube face, within
+  `to_static`) and `NvfStaticShadowFace::quiet`. A quiet face is drawn into the static
+  cache's layer and not copied into the sampled layer after, which keeps its picture; only
+  a layer that already holds this light's map may be left so (`nvf_had_map`). The game asks
+  for it where moving casters stand in the face and composites the face in the next frame,
+  so their shadows never leave the sampled map. Without `static_quiet` nothing changes.
 
 ## bevy_light 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 

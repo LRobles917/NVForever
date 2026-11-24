@@ -2200,6 +2200,25 @@ bevy_pbr):
 | Shadows blink at a cache redraw | A face drawn into the static cache was copied out without its moving casters, which came back a frame or more later. | Such a face is drawn quietly (`HoldLightShadowMaps::static_quiet`) and composited next frame; a due composite goes before another cache redraw. |
 | Static shadows missing after a turn of the view | A light told to draw on last frame's visibility and lost from view this frame counted as drawn. | `skip_fixtures` marks it again (`Pass::lost`). |
 
+**Second round, same day** (owner's hand test of the first build: "the shadows on
+Performance are very blocky and update slow", "on Quality also not 100% real-time"; the
+session's own log showed no light waiting for a draw). The maps were current; their texels
+showed. With a lamp close over a caster a 512 map's texel is several units wide on the
+floor, Performance's filter (the camera's, a fraction of a texel wide on these maps) drew
+each as a block, and a moving edge jumped block by block. Now: every lamp with a slot takes
+the game's own filter, with a fixed width of 1.75 texels and 8 taps where it has no soft
+size (Performance), and never narrower than that on Quality; Quality's cubes are 1024
+(`cube_side`; 25 MB a cube and as much again for the static cache: 1.4 GB for 28 lamps,
+logged). The soft size goes to the renderer in `HoldLightShadowMaps::soft_size` and no
+longer through the light's `radius`, which the lighting reads too (a lamp's highlight grew,
+dimmed and popped). The ambient occlusion's lamp factor (§3.1) now follows a lamp's shadow
+fade (`ssao_lighting/hook.rs`): a lamp fading its shadow in or out had neither shadow nor
+occlusion for the fade's length. Open from the occlusion's audit, for the owner: with ALCS
+on, the casting lamps' light takes no occlusion (it is their shadow's job), so indoors the
+occlusion is left on the ambient term alone; its radius is capped at 80 render pixels, about
+5% of the distance at 4K; a casting placed spot lamp would dim first-person arms as the
+flashlight does (none seen cast in the scenes run).
+
 Measured 2026-11-24 (RTX 5090, 4K DLSS Quality, frame generation 2x, the owner's INI): Doc
 Mitchell's opening, 25 lights casting, 1.7 lights switched on and 3.4 faces composited a
 frame, `prepare_lights` 0.04 ms, the game's systems 0.04 ms, shadow views 0.1-0.2 ms of GPU

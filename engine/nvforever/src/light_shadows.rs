@@ -84,8 +84,8 @@
 //! - **Near plane** [`NEAR_Z`]: what lies nearer the light than that casts nothing from it,
 //!   so the bulb, shade or flames a light sits in do not black out the room
 //!   [engineering choice; `NVF_LIGHT_SHADOW_NEAR` overrides it for a run].
-//! - **Maps**: the cubes' side follows the Shadow resolution row: 512 with 2048, 1024 with
-//!   4096 (`PointLightShadowMap`); a spot light draws one layer of the sun's texture (its
+//! - **Maps**: the cubes' side is 1024 on Quality; on Performance it follows the Shadow
+//!   resolution row, 512 with 2048 and 1024 with 4096 ([`cube_side`], `PointLightShadowMap`); a spot light draws one layer of the sun's texture (its
 //!   side, so each slot of the spot room costs a layer of 2048 or 4096 texels square).
 //! - The diffuse light of the display-value sum takes the shadow
 //!   (`lights::display_shader`), as the flashlight's always has. The flashlight is not one
@@ -1303,6 +1303,17 @@ fn refresh_override() -> Option<u64> {
     })
 }
 
+/// `NVF_LIGHT_SHADOW_DRAWS=<lights>` (a measuring aid): this many lights may draw in a
+/// frame instead of [`Tuning::draws`], to measure what a light switched on costs.
+fn draws_override() -> Option<usize> {
+    static DRAWS: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    *DRAWS.get_or_init(|| {
+        let v = std::env::var("NVF_LIGHT_SHADOW_DRAWS").ok()?.trim().parse::<usize>().ok()?;
+        info!("light shadows: NVF_LIGHT_SHADOW_DRAWS={v}");
+        Some(v)
+    })
+}
+
 /// The near plane in use: [`NEAR_Z`], or `NVF_LIGHT_SHADOW_NEAR` (game units) for a run.
 fn near_z() -> f32 {
     static NEAR_PLANE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
@@ -1349,9 +1360,12 @@ fn casting_layers() -> RenderLayers {
     RenderLayers::from_layers(&[0, crate::sky::SHADOW_LAYER, crate::sky::BODY_LAYER])
 }
 
-/// The cube side for the Shadow resolution row's side.
-pub fn cube_side(directional: usize) -> usize {
-    if directional >= 4096 { 1024 } else { 512 }
+/// The cube side for the Shadow resolution row's side: 512 with 2048 and 1024 with 4096;
+/// on Quality 1024 with either [engineering choice, 2026-11-24: with a lamp close over a
+/// caster a 512 map's texels showed as blocks along its shadow's edge, which moved block by
+/// block; four times the memory, [`cube_texture_mb`], logged].
+pub fn cube_side(directional: usize, quality: bool) -> usize {
+    if directional >= 4096 || quality { 1024 } else { 512 }
 }
 
 /// Megabytes (10^6 bytes) of a cube texture of `cubes` cubes of `side` texels square, 32-bit
@@ -1505,7 +1519,7 @@ fn shadow_lights(
     mut logged: Local<Option<(usize, usize, usize)>>,
 ) {
     let _timed = Timed::start(0);
-    let tune = tuning(settings.choice).map(|t| Tuning { refresh: refresh_override().unwrap_or(t.refresh), ..t });
+    let tune = tuning(settings.choice).map(|t| Tuning { refresh: refresh_override().unwrap_or(t.refresh), draws: draws_override().unwrap_or(t.draws), ..t });
     let reach = sky.as_ref().map_or(0.0, |s| s.shadow_distance * s.shadow_reach.max(1.0));
     let (at, view) = camera.iter().next().map_or((None, None), |(c, f)| (Some(c.translation()), f));
     let state = &mut *state;
@@ -1561,7 +1575,7 @@ fn shadow_lights(
         _ => (EntityHashSet::default(), EntityHashSet::default()),
     };
     if tune.is_some() {
-        let side = cube_side(directional.as_ref().map_or(2048, |d| d.size));
+        let side = cube_side(directional.as_ref().map_or(2048, |d| d.size), crate::light_shadow_detail::detailed(settings.choice));
         state.cube_before.get_or_insert(cube.size);
         if cube.size != side {
             cube.size = side;
@@ -2554,8 +2568,10 @@ mod tests {
         assert_eq!(free_slot([0, 1, 3].into_iter()), 2);
         assert_eq!(free_slot([3, 1, 0, 2].into_iter()), 4);
         assert_eq!(free_slot([1, 2].into_iter()), 0);
-        assert_eq!(cube_side(2048), 512);
-        assert_eq!(cube_side(4096), 1024);
+        assert_eq!(cube_side(2048, false), 512);
+        assert_eq!(cube_side(4096, false), 1024);
+        assert_eq!(cube_side(2048, true), 1024, "Quality");
+        assert_eq!(cube_side(4096, true), 1024);
     }
 
     #[test]

@@ -638,10 +638,20 @@ fn sample_shadow_cubemap_pcss(
 // The search covers the light as seen from the fragment (`light_size / distance`), with a
 // tap at the fragment itself so a small thing next to its shadow is always found; the
 // filter's width is the penumbra of the blockers found, `light_size * (receiver - blocker)
-// / blocker`, never under a texel. The taps turn by a per-pixel angle, a new one each
-// frame while the view jitters (TAA, FSR, DLSS), which then smooth it.
+// / blocker`, never under `NVF_SOFT_FILTER_MIN` texels. The taps turn by a per-pixel angle,
+// a new one each frame while the view jitters (TAA, FSR, DLSS), which then smooth it.
+//
+// With `light_size` 0 (the game's lamps without soft shadows, its Performance choice) there
+// is no search: a fixed filter of `NVF_SOFT_FILTER_MIN` texels with fewer taps, smooth
+// edges at the cost of Bevy's 8-tap filter. That one spans a fraction of a texel of the
+// lamps' maps: a shadow's edge showed each texel as a block, and a moving edge jumped
+// block by block (playtest 2026-11-24).
 const NVF_SOFT_SEARCH_TAPS: u32 = 8u;
 const NVF_SOFT_FILTER_TAPS: u32 = 12u;
+const NVF_PLAIN_FILTER_TAPS: u32 = 8u;
+// The narrowest filter, in texels of the light's map: wide enough that a map's texels do
+// not show as blocks along a shadow's edge.
+const NVF_SOFT_FILTER_MIN: f32 = 1.75;
 // The widest search and filter, as tangents from the light (about 6 and 4 degrees).
 const NVF_SOFT_SEARCH_MAX: f32 = 0.1;
 const NVF_SOFT_FILTER_MAX: f32 = 0.07;
@@ -705,8 +715,11 @@ fn nvf_sample_shadow_cubemap_soft(
     @else
     let turn = 2.0 * PI * interleaved_gradient_noise(frag_coord_xy, 1u);
 
-    var filter_width = texel;
+    var filter_width = NVF_SOFT_FILTER_MIN * texel;
+    var taps = NVF_PLAIN_FILTER_TAPS;
     @if(PCSS_SAMPLERS_AVAILABLE) {
+    if (light_size > 0.0) {
+    taps = NVF_SOFT_FILTER_TAPS;
     // 1. The blockers between the fragment and the light, over the light's width as the
     // fragment sees it. Tap 0 is the fragment's own direction.
     let search = clamp(light_size / receiver, 2.0 * texel, NVF_SOFT_SEARCH_MAX);
@@ -737,14 +750,15 @@ fn nvf_sample_shadow_cubemap_soft(
         return 1.0;
     }
     let blocker = blockers.x / blockers.y;
-    filter_width = clamp(light_size * (receiver - blocker) / max(blocker * receiver, 1.0e-4), texel, NVF_SOFT_FILTER_MAX);
+    filter_width = clamp(light_size * (receiver - blocker) / max(blocker * receiver, 1.0e-4), NVF_SOFT_FILTER_MIN * texel, NVF_SOFT_FILTER_MAX);
+    }
     }
 
     // 2. The share of the light that reaches the fragment's surface over the penumbra's
     // width.
     var lit = 0.0;
-    for (var i = 0u; i < NVF_SOFT_FILTER_TAPS; i += 1u) {
-        let r = sqrt((f32(i) + 0.5) / f32(NVF_SOFT_FILTER_TAPS));
+    for (var i = 0u; i < taps; i += 1u) {
+        let r = sqrt((f32(i) + 0.5) / f32(taps));
         let angle = f32(i) * NVF_GOLDEN_ANGLE + turn;
         let off = vec2(cos(angle), sin(angle)) * r * filter_width;
         let tap = dir + basis[0] * off.x + basis[1] * off.y;
@@ -759,7 +773,7 @@ fn nvf_sample_shadow_cubemap_soft(
             nvf_point_shadow_depth(major, proj),
         );
     }
-    return lit / f32(NVF_SOFT_FILTER_TAPS);
+    return lit / f32(taps);
 
     }
 }

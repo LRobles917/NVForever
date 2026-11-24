@@ -7,7 +7,8 @@
 //!   shadows (`soft_shadows_enabled`, the `experimental_pbr_pcss` feature for its samplers)
 //!   with a light size of [`SOFT_RADIUS`] (an explosion's [`BLAST_RADIUS`]): sharp where a
 //!   shape meets the surface its shadow falls on, softer further away, as a lamp's are. The
-//!   light's `radius` is that size; its lighting barely changes at a few units. The filter
+//!   size goes to the renderer apart from the light's `radius`
+//!   (`HoldLightShadowMaps::soft_size`), so the lighting does not change. The filter
 //!   is the patched renderer's own (bevy_pbr shadow_sampling.wesl
 //!   `nvf_sample_shadow_cubemap_soft`, engine/vendor/README.md "ALCS soft shadows"): the
 //!   blocker search and the penumbra in world units, each tap compared against the
@@ -114,73 +115,32 @@ impl Plugin for LightShadowDetailPlugin {
     }
 }
 
-type Lit<'a> = (Entity, Option<&'a mut PointLight>, Option<&'a mut SpotLight>, Has<CastingLight>, Option<&'a ShadowSource>);
+type Lit<'a> = (Entity, Has<PointLight>, Has<CastingLight>, Option<&'a ShadowSource>);
 
 /// The lights these settings touch: the placed ones and the other sources.
 type Lamps = Or<(With<SessionLight>, With<ShadowSource>)>;
 
 type Cameras<'a> = (Entity, &'a GlobalTransform, Has<ContactShadows>, Has<TemporalJitter>);
 
-/// Set a light's soft edges (`enabled`, `radius`) for `soft` with light size `size`; `own`
-/// keeps the light's own radius while it is soft and gives it back after. Whether anything
-/// changed: only then is the light marked changed for Bevy.
-pub fn apply_soft(enabled: &mut bool, radius: &mut f32, soft: bool, size: f32, own: &mut Option<f32>) -> bool {
-    let before = (*enabled, *radius);
-    if soft {
-        own.get_or_insert(*radius);
-        *radius = size;
-    } else if let Some(r) = own.take() {
-        *radius = r;
-    }
-    *enabled = soft;
-    before != (*enabled, *radius)
-}
-
-/// Soft edges on the casting lights on Quality, and on those whose held maps still fade out
-/// (a slot kept, `HoldLightShadowMaps`); off otherwise, each light's own radius given back.
-/// A light is marked changed only when its settings change: marked every frame (as a
-/// `Mut::into_inner` did until 2026-11-18), every lamp in the world was extracted again and
-/// its cube frusta made again each frame.
-fn soften(settings: Res<LightShadows>, hold: Res<HoldLightShadowMaps>, mut lights: Query<Lit, Lamps>, mut was: Local<EntityHashMap<f32>>) {
+/// The soft sizes of the casting point lights on Quality, and of those whose held maps still
+/// fade out (a slot kept, `HoldLightShadowMaps`); none otherwise. They go to the renderer
+/// in `HoldLightShadowMaps::soft_size`, apart from the lights' `radius`: until 2026-11-24
+/// the radius carried the size, and the lighting read it too (a lamp's highlight grew and
+/// dimmed, and popped when the size was switched). Spot lamps get none: they keep the
+/// camera's shadow filter.
+fn soften(settings: Res<LightShadows>, mut hold: ResMut<HoldLightShadowMaps>, lights: Query<Lit, Lamps>) {
     let _timed = crate::light_shadows::Timed::start(2);
-    let on = detailed(settings.choice);
-    for (e, point, spot, casting, source) in &mut lights {
-        let size = soft_aid().unwrap_or_else(|| soft_radius(source.map(|s| s.0)));
-        let held = hold.slots.contains_key(&e) || hold.spot_slots.contains_key(&e);
-        let soft = on && (casting || held) && size > 0.0;
-        let mut own = was.get(&e).copied();
-        match (point, spot) {
-            (Some(mut p), _) => {
-                let l = p.bypass_change_detection();
-                if apply_soft(&mut l.soft_shadows_enabled, &mut l.radius, soft, size, &mut own) {
-                    p.set_changed();
-                }
-            }
-            (None, Some(mut s)) => {
-                // Point lights only: the lamps' soft shadows are the patched renderer's
-                // own (bevy_pbr `nvf_sample_shadow_cubemap_soft`, world units). Bevy's for
-                // a spot light take the size as a plain number, as its point lights' did
-                // (stripes, 2026-11-24): a spot lamp keeps the camera's shadow filter.
-                let l = s.bypass_change_detection();
-                if apply_soft(&mut l.soft_shadows_enabled, &mut l.radius, false, size, &mut own) {
-                    s.set_changed();
-                }
-            }
-            _ => continue,
-        }
-        match own {
-            Some(r) => {
-                was.insert(e, r);
-            }
-            None => {
-                was.remove(&e);
+    let mut sizes: EntityHashMap<f32> = EntityHashMap::default();
+    if detailed(settings.choice) {
+        for (e, point, casting, source) in &lights {
+            let size = soft_aid().unwrap_or_else(|| soft_radius(source.map(|s| s.0)));
+            if point && size > 0.0 && (casting || hold.slots.contains_key(&e)) {
+                sizes.insert(e, size);
             }
         }
     }
-    // Lights gone: nothing to give back.
-    if was.len() > 256 {
-        let alive: bevy::ecs::entity::EntityHashSet = lights.iter().map(|q| q.0).collect();
-        was.retain(|e, _| alive.contains(e));
+    if hold.soft_size != sizes {
+        hold.soft_size = sizes;
     }
 }
 type Contacted<'a> = (&'a GlobalTransform, Option<&'a mut PointLight>, Option<&'a mut SpotLight>, Option<&'a ShadowSource>);
@@ -260,21 +220,5 @@ mod tests {
         assert_eq!(soft_radius(Some(SourceKind::Explosion)), BLAST_RADIUS);
         let c = contact_settings();
         assert!(c.length < 40.0 && c.thickness < 12.0, "shorter and thinner than the sun's dropped try");
-    }
-
-    #[test]
-    fn soft_edges_change_a_light_only_when_they_change_and_give_its_radius_back() {
-        let (mut enabled, mut radius, mut own) = (false, 5.0, None);
-        assert!(apply_soft(&mut enabled, &mut radius, true, SOFT_RADIUS, &mut own), "switched on");
-        assert_eq!((enabled, radius, own), (true, SOFT_RADIUS, Some(5.0)));
-        for _ in 0..3 {
-            assert!(!apply_soft(&mut enabled, &mut radius, true, SOFT_RADIUS, &mut own), "kept: no change, the light is not marked");
-        }
-        assert!(apply_soft(&mut enabled, &mut radius, false, SOFT_RADIUS, &mut own), "switched off");
-        assert_eq!((enabled, radius, own), (false, 5.0, None), "its own radius back");
-        assert!(!apply_soft(&mut enabled, &mut radius, false, SOFT_RADIUS, &mut own), "off and kept off");
-        // A light whose own radius is the soft size: switching on still changes its flag.
-        let (mut enabled, mut radius, mut own) = (false, SOFT_RADIUS, None);
-        assert!(apply_soft(&mut enabled, &mut radius, true, SOFT_RADIUS, &mut own));
     }
 }

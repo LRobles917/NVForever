@@ -1796,10 +1796,16 @@ pub fn prepare_lights(
                     .and_then(|index| index.try_into().ok())
                     .unwrap_or(u32::MAX),
                 range: light.range,
-                soft_shadow_size: if light.soft_shadows_enabled {
-                    light.radius
-                } else {
-                    0.0
+                // NVForever ALCS soft sizes: the game's size for the light's soft shadows,
+                // apart from the light's `radius` (which the lighting also reads).
+                soft_shadow_size: match hold_lights
+                    .as_deref()
+                    .filter(|hold| hold.active)
+                    .and_then(|hold| hold.soft_size.get(&point_lights.get(*entity).unwrap().1.id()))
+                {
+                    Some(size) => *size,
+                    None if light.soft_shadows_enabled => light.radius,
+                    None => 0.0,
                 },
             });
         global_clusterable_object_meta
@@ -3861,6 +3867,12 @@ pub struct HoldLightShadowMaps {
     /// for it where moving casters stand in the face: the copy would show the face without
     /// them for a frame; it composites the face in the next frame instead.
     pub static_quiet: EntityHashMap<u8>,
+    /// NVForever ALCS soft sizes (2026-11-24): the size of a light's soft shadows (world
+    /// units), in place of `soft_shadows_enabled` and the light's `radius`. Bevy takes the
+    /// soft size from the radius, which its lighting also reads (the highlight of a sphere
+    /// light): a lamp given a soft size of 24 units got a wider, dimmer highlight, wrong
+    /// within 24 units of it, and popped when the size was switched.
+    pub soft_size: EntityHashMap<f32>,
 }
 
 /// NVForever static shadow cache: one layer copied between the cache texture and the

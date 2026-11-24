@@ -84,10 +84,12 @@ fn nvf_fetch_point_shadow_unfaded(
     // If soft shadows are enabled, use the PCSS path. Cubemaps assume a
     // left-handed coordinate space, so we have to flip the z-axis when
     // sampling.
-    if ((*light).soft_shadow_size > 0.0) {
-        // NVForever ALCS soft shadows: the search and the filter in world units, each tap
-        // compared against the fragment's own surface along it (shadow_sampling.wesl
-        // `nvf_sample_shadow_cubemap_soft`), in place of `sample_shadow_cubemap_pcss`.
+    // NVForever ALCS soft shadows: a light with a soft size, and any lamp the game gave a
+    // slot (bits 16..23 of its flags; size 0: a fixed smooth filter), takes the search and
+    // the filter in world units, each tap compared against the fragment's own surface
+    // along it (shadow_sampling.wesl `nvf_sample_shadow_cubemap_soft`), in place of
+    // `sample_shadow_cubemap_pcss` and of the camera's filter.
+    if ((*light).soft_shadow_size > 0.0 || (((*light).flags >> 16u) & 0xffu) != 0u) {
         return nvf_sample_shadow_cubemap_soft(
             frag_ls,
             surface_normal,

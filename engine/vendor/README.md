@@ -686,6 +686,14 @@ docs/design/graphics-enhanced.md §3.17 "Rewrite of 2026-11-24"):
   by the light's size as a plain number and compares every tap against the fragment's one
   clip-space depth: with a light size in the game's units (24) every lit surface shadowed
   itself in stripes. `sample_shadow_cubemap_pcss` is left as it is, unused by the game.
+  Since the second round the same day a lamp the game gave a slot takes it with or
+  without a soft size: with size 0 there is no search, a fixed filter of
+  `NVF_SOFT_FILTER_MIN` texels and `NVF_PLAIN_FILTER_TAPS` taps (the camera's filter spans
+  a fraction of a texel of the lamps' maps, whose texels then showed as blocks).
+- **ALCS soft sizes**, marked `NVForever ALCS soft sizes`, in `src/render/light.rs`:
+  `HoldLightShadowMaps::soft_size` gives a light's soft-shadow size while the hold is
+  active, in place of `soft_shadows_enabled` and `radius` (upstream takes the size from the
+  radius, which its lighting also reads). A light not in the map is upstream's.
 - **ALCS quiet static draws**, marked `NVForever ALCS quiet static draws`, in
   `src/render/light.rs`: `HoldLightShadowMaps::static_quiet` (bits per cube face, within
   `to_static`) and `NvfStaticShadowFace::quiet`. A quiet face is drawn into the static

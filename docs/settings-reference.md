@@ -1167,8 +1167,10 @@ below cover them all.
   not; what lies within 8 units of a light casts nothing from it, and lamp housings, shades
   and bulbs cast none from their own light. Quality also gives the point lights' shadows
   soft edges (sharp where a thing touches the surface, softer away from it) and, while TAA,
-  FSR or DLSS is on, small contact shadows where things touch. A point light's maps are
-  512² with Shadow resolution 2048, 1024² with 4096. Under a loading screen every casting
+  FSR or DLSS is on, small contact shadows where things touch; Performance smooths the
+  edges by a fixed width. A point light's maps are 1024² on Quality (about 50 MB of video
+  memory a casting light); on Performance 512² with Shadow resolution 2048 and 1024² with
+  4096. Under a loading screen every casting
   light's maps are drawn before play, those in view first, within 3 seconds. The flashlight
   casts as before.
   The original's placed lights cast none [design].

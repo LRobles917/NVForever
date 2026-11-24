@@ -47,7 +47,49 @@ use bevy::transform::TransformSystems;
 use crate::light_shadows::{CastingLight, LightShadows, ShadowSource, SourceKind};
 use crate::lights::SessionLight;
 
-/// The light size of a lamp's soft shadow (game units, about 34 cm: a shade, a lantern)
+/// How far from a light its fixture is looked for (game units): the game hangs its lights
+/// under their lamps, half of them within 89 units and most within 160 (light_shadows.rs
+/// `LightFixture`, the census there).
+pub const FIXTURE_REACH: f32 = 160.0;
+
+/// A lamp's light size from its fixture: this share of the fixture shape's size (the mean
+/// of its box's two larger half extents), within [`SOFT_MIN`]..[`SOFT_MAX`] [engineering
+/// choice, 2026-11-24, [design: "soft-shadow width per lamp type/size"]: a candle or a bare
+/// bulb throws crisp shadows, a shade or a strip light soft ones. Every lamp had
+/// [`SOFT_RADIUS`]].
+pub const FIXTURE_SHARE: f32 = 0.8;
+pub const SOFT_MIN: f32 = 4.0;
+pub const SOFT_MAX: f32 = 40.0;
+
+/// A light with no fixture in reach (the fill and ambient lights a room is lit with, which
+/// stand for light bounced off walls and ceilings) is this share of its range in size,
+/// within [`SOFT_RADIUS`]..[`FILL_MAX`]: wide, so its shadows are soft [engineering choice].
+pub const FILL_SHARE: f32 = 0.1;
+pub const FILL_MAX: f32 = 48.0;
+
+/// The light sizes of the other sources (game units): a muzzle flash is a point, a grass
+/// fire a patch of flames [engineering choice].
+pub const FLASH_RADIUS: f32 = 8.0;
+pub const FIRE_RADIUS: f32 = 30.0;
+
+/// A lamp's light size ([`FIXTURE_SHARE`], [`FILL_SHARE`]) and whether a fixture gave it.
+/// `fixtures`: the fixture shapes with their centre's distance from the light and their
+/// world half extents; the nearest within [`FIXTURE_REACH`] is the lamp's. `range`: the
+/// light's.
+pub fn lamp_soft_size(fixtures: impl Iterator<Item = (f32, Vec3)>, range: f32) -> (f32, bool) {
+    let nearest = fixtures.filter(|(d, _)| *d <= FIXTURE_REACH).min_by(|a, b| a.0.total_cmp(&b.0));
+    match nearest {
+        Some((_, half)) => {
+            let h = half.abs();
+            // The two larger half extents: a strip light is long, a cord thin.
+            let emitter = (h.x + h.y + h.z - h.min_element()) * 0.5;
+            ((emitter * FIXTURE_SHARE).clamp(SOFT_MIN, SOFT_MAX), true)
+        }
+        None => ((range * FILL_SHARE).clamp(SOFT_RADIUS, FILL_MAX), false),
+    }
+}
+
+/// The light size of a lamp's soft shadow without a fixture's (game units, about 34 cm: a shade, a lantern)
 /// [engineering choice, compared in pictures 2026-11-18 in the Goodsprings General Store:
 /// at 8 the edges looked as hard as without; at 24-32 a hanging wire's shadow is soft away
 /// from the ceiling and sharp where it touches it].
@@ -90,11 +132,14 @@ pub fn detailed(choice: usize) -> bool {
     choice == 2
 }
 
-/// The soft-shadow size of a casting light by what it is.
-pub fn soft_radius(kind: Option<SourceKind>) -> f32 {
+/// The soft-shadow size of a source by what it is; `None` for a placed light and a light a
+/// script attached, whose size is their fixture's ([`lamp_soft_size`]).
+pub fn soft_radius(kind: Option<SourceKind>) -> Option<f32> {
     match kind {
-        Some(SourceKind::Explosion) => BLAST_RADIUS,
-        _ => SOFT_RADIUS,
+        Some(SourceKind::Explosion) => Some(BLAST_RADIUS),
+        Some(SourceKind::MuzzleFlash) => Some(FLASH_RADIUS),
+        Some(SourceKind::GrassFire) => Some(FIRE_RADIUS),
+        Some(SourceKind::Attached) | None => None,
     }
 }
 
@@ -115,7 +160,14 @@ impl Plugin for LightShadowDetailPlugin {
     }
 }
 
-type Lit<'a> = (Entity, Has<PointLight>, Has<CastingLight>, Option<&'a ShadowSource>);
+type Lit<'a> = (Entity, &'a GlobalTransform, Option<&'a PointLight>, Has<CastingLight>, Option<&'a ShadowSource>);
+
+/// A fixture shape new this frame, or one whose bounds are (a shape has them only once its
+/// mesh is loaded).
+type NewFixtures = (With<crate::light_shadows::LightFixture>, Or<(Added<crate::light_shadows::LightFixture>, Added<bevy::camera::primitives::Aabb>)>);
+
+/// The lamps' fixture shapes ([`crate::light_shadows::LightFixture`]).
+type Fixtures<'a> = (&'a GlobalTransform, &'a bevy::camera::primitives::Aabb);
 
 /// The lights these settings touch: the placed ones and the other sources.
 type Lamps = Or<(With<SessionLight>, With<ShadowSource>)>;
@@ -123,20 +175,63 @@ type Lamps = Or<(With<SessionLight>, With<ShadowSource>)>;
 type Cameras<'a> = (Entity, &'a GlobalTransform, Has<ContactShadows>, Has<TemporalJitter>);
 
 /// The soft sizes of the casting point lights on Quality, and of those whose held maps still
-/// fade out (a slot kept, `HoldLightShadowMaps`); none otherwise. They go to the renderer
-/// in `HoldLightShadowMaps::soft_size`, apart from the lights' `radius`: until 2026-11-24
-/// the radius carried the size, and the lighting read it too (a lamp's highlight grew and
-/// dimmed, and popped when the size was switched). Spot lamps get none: they keep the
-/// camera's shadow filter.
-fn soften(settings: Res<LightShadows>, mut hold: ResMut<HoldLightShadowMaps>, lights: Query<Lit, Lamps>) {
+/// fade out (a slot kept, `HoldLightShadowMaps`); none otherwise. Each lamp's own, from its
+/// fixture ([`lamp_soft_size`]; found once and kept, looked for again when fixtures appear
+/// while it has none). They go to the renderer in `HoldLightShadowMaps::soft_size`, apart
+/// from the lights' `radius`: until 2026-11-24 the radius carried the size, and the lighting
+/// read it too (a lamp's highlight grew and dimmed, and popped when the size was switched).
+/// Spot lamps get none: they keep the camera's shadow filter.
+fn soften(
+    settings: Res<LightShadows>,
+    mut hold: ResMut<HoldLightShadowMaps>,
+    lights: Query<Lit, Lamps>,
+    fixtures: Query<Fixtures, With<crate::light_shadows::LightFixture>>,
+    new_fixtures: Query<(), NewFixtures>,
+    mut known: Local<EntityHashMap<(f32, bool)>>,
+    mut logged: Local<(usize, usize)>,
+) {
     let _timed = crate::light_shadows::Timed::start(2);
     let mut sizes: EntityHashMap<f32> = EntityHashMap::default();
     if detailed(settings.choice) {
-        for (e, point, casting, source) in &lights {
-            let size = soft_aid().unwrap_or_else(|| soft_radius(source.map(|s| s.0)));
-            if point && size > 0.0 && (casting || hold.slots.contains_key(&e)) {
+        // Fixtures that came (a cell loaded after its lights; a shape has its bounds only once
+        // its mesh is loaded, a frame or more after it is spawned): the lamps without one look
+        // again.
+        if !new_fixtures.is_empty() {
+            known.retain(|_, (_, fixture)| *fixture);
+        }
+        for (e, place, point, casting, source) in &lights {
+            let Some(point) = point else { continue };
+            if !(casting || hold.slots.contains_key(&e) || hold.far_slots.contains_key(&e)) {
+                continue;
+            }
+            let size = soft_aid().or_else(|| soft_radius(source.map(|s| s.0))).unwrap_or_else(|| {
+                known
+                    .entry(e)
+                    .or_insert_with(|| {
+                        let at = place.translation();
+                        lamp_soft_size(
+                            fixtures.iter().map(|(t, aabb)| {
+                                let (scale, _, _) = t.to_scale_rotation_translation();
+                                (t.transform_point(Vec3::from(aabb.center)).distance(at), Vec3::from(aabb.half_extents) * scale.abs())
+                            }),
+                            point.range,
+                        )
+                    })
+                    .0
+            });
+            if size > 0.0 {
                 sizes.insert(e, size);
             }
+        }
+        // Lamps gone: forgotten once there are many.
+        if known.len() > 512 {
+            known.retain(|e, _| sizes.contains_key(e));
+        }
+        let with_fixture = known.values().filter(|(_, fixture)| *fixture).count();
+        if *logged != (known.len(), with_fixture) && !known.is_empty() {
+            *logged = (known.len(), with_fixture);
+            let (lo, hi) = known.values().fold((f32::MAX, 0.0f32), |(lo, hi), (s, _)| (lo.min(*s), hi.max(*s)));
+            info!("light shadows: light sizes of {} lamps from {lo:.0} to {hi:.0} units, {with_fixture} by their fixture, the rest by their range", known.len());
         }
     }
     if hold.soft_size != sizes {
@@ -215,10 +310,33 @@ mod tests {
     fn only_quality_softens_and_explosions_are_larger() {
         assert!(detailed(2));
         assert!(!detailed(1) && !detailed(0));
-        assert_eq!(soft_radius(None), SOFT_RADIUS);
-        assert_eq!(soft_radius(Some(SourceKind::MuzzleFlash)), SOFT_RADIUS);
-        assert_eq!(soft_radius(Some(SourceKind::Explosion)), BLAST_RADIUS);
+        assert_eq!(soft_radius(None), None, "a placed light: its fixture's");
+        assert_eq!(soft_radius(Some(SourceKind::Attached)), None);
+        assert_eq!(soft_radius(Some(SourceKind::MuzzleFlash)), Some(FLASH_RADIUS));
+        assert_eq!(soft_radius(Some(SourceKind::GrassFire)), Some(FIRE_RADIUS));
+        assert_eq!(soft_radius(Some(SourceKind::Explosion)), Some(BLAST_RADIUS));
+        const { assert!(FLASH_RADIUS < SOFT_RADIUS && SOFT_RADIUS < BLAST_RADIUS) };
         let c = contact_settings();
         assert!(c.length < 40.0 && c.thickness < 12.0, "shorter and thinner than the sun's dropped try");
+    }
+
+    #[test]
+    fn a_lamps_light_size_follows_its_fixture_and_a_fill_lights_its_range() {
+        let lamp = |fixtures: &[(f32, Vec3)], range: f32| lamp_soft_size(fixtures.iter().copied(), range);
+        // A candle (a few units across): the smallest, crisp shadows.
+        assert_eq!(lamp(&[(20.0, Vec3::new(2.0, 2.0, 6.0))], 300.0), (SOFT_MIN, true));
+        // A bare bulb, a shade, a chandelier: wider each.
+        let (bulb, shade, chandelier) = (lamp(&[(60.0, Vec3::splat(6.0))], 400.0).0, lamp(&[(60.0, Vec3::new(20.0, 20.0, 12.0))], 400.0).0, lamp(&[(60.0, Vec3::new(60.0, 60.0, 40.0))], 400.0).0);
+        assert!(bulb < shade && shade < chandelier && chandelier == SOFT_MAX, "{bulb} {shade} {chandelier}");
+        assert!((shade - 16.0).abs() < 1e-4);
+        // A strip light is long: the two larger half extents count; a cord is thin.
+        assert!((lamp(&[(60.0, Vec3::new(40.0, 4.0, 4.0))], 400.0).0 - 17.6).abs() < 1e-4);
+        // The nearest fixture within reach is the lamp's.
+        assert_eq!(lamp(&[(120.0, Vec3::splat(40.0)), (50.0, Vec3::splat(10.0))], 400.0), (8.0, true));
+        assert_eq!(lamp(&[(FIXTURE_REACH + 1.0, Vec3::splat(10.0))], 400.0), (40.0, false), "none in reach: a fill light");
+        // Fill lights: by their range, never under the old one size, never over the most.
+        assert_eq!(lamp(&[], 128.0), (SOFT_RADIUS, false));
+        assert_eq!(lamp(&[], 300.0), (30.0, false));
+        assert_eq!(lamp(&[], 2000.0), (FILL_MAX, false));
     }
 }

@@ -1852,7 +1852,7 @@ fn take_shadow_resolution(w: &mut World, text: &str) -> bool {
 /// The ALCS (Experimental) row's note (light_shadows.rs; ALCS: All Lights Cast Shadows; the
 /// row was ALC shadows until 2026-11-24 and Lamp shadows until 2026-11-19; the user-visible
 /// name since 2026-11-19, once Lamp shadows; the INI key stays `light-shadows`).
-const LIGHT_SHADOWS_NOTE: &str = "ALCS (All Lights Cast Shadows): lamps, fires and spot lights cast shadows, so walls stop their light. Performance: fewer lights, hard edges. Experimental. Costs frame rate. Not in the original.";
+const LIGHT_SHADOWS_NOTE: &str = "ALCS (All Lights Cast Shadows): lamps, fires and spot lights cast shadows, so walls stop their light. Performance: fewer lights, plain edges. Experimental. Costs frame rate. Not in the original.";
 
 fn light_shadows_chosen(w: &World) -> String {
     let choice = w.get_resource::<crate::light_shadows::LightShadows>().map_or(0, |l| l.choice);

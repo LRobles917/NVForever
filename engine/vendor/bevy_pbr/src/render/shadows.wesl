@@ -4,7 +4,7 @@ import package::render::{
     shadow_sampling::{
         SPOT_SHADOW_TEXEL_SIZE, sample_shadow_cubemap, sample_shadow_cubemap_pcss,
         sample_shadow_map, sample_shadow_map_pcss, nvf_spot_shadow_layer,
-        nvf_sample_shadow_cubemap_soft,
+        nvf_sample_shadow_cubemap_soft, nvf_point_texel_scale,
     }
 };
 
@@ -65,7 +65,8 @@ fn nvf_fetch_point_shadow_unfaded(
     // The normal bias here is already scaled by the texel size at 1 world unit from the light.
     // The texel size increases proportionally with distance from the light so multiplying by
     // distance to light scales the normal bias to the texel size at the fragment distance.
-    let normal_offset = (*light).shadow_normal_bias * distance_to_light * surface_normal.xyz;
+    // NVForever ALCS far maps: a far light's texels are larger (`nvf_point_texel_scale`).
+    let normal_offset = (*light).shadow_normal_bias * nvf_point_texel_scale(light_id) * distance_to_light * surface_normal.xyz;
     let depth_offset = (*light).shadow_depth_bias * normalize(surface_to_light.xyz);
     let offset_position = frag_position.xyz + normal_offset + depth_offset;
 

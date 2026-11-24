@@ -90,8 +90,11 @@
 //! - **Near plane** [`NEAR_Z`]: what lies nearer the light than that casts nothing from it,
 //!   so the bulb, shade or flames a light sits in do not black out the room
 //!   [engineering choice; `NVF_LIGHT_SHADOW_NEAR` overrides it for a run].
-//! - **Maps**: the cubes' side is 1024 on Quality; on Performance it follows the Shadow
-//!   resolution row, 512 with 2048 and 1024 with 4096 ([`cube_side`], `PointLightShadowMap`); a spot light draws one layer of the sun's texture (its
+//! - **Maps**: on Quality the cubes are in two textures of two sides ([`cube_sides`]: 1024
+//!   and 512): the [`Tuning::near`] lights nearest the camera in the near one, the rest in the
+//!   far one ([`near_set`]; engine/vendor/README.md "ALCS far maps"). A light that has to
+//!   change draws all its faces in the frame it does ([`LampState::reslot`]). On Performance
+//!   one texture, 512 with Shadow resolution 2048 and 1024 with 4096 (`PointLightShadowMap`); a spot light draws one layer of the sun's texture (its
 //!   side, so each slot of the spot room costs a layer of 2048 or 4096 texels square).
 //! - The diffuse light of the display-value sum takes the shadow
 //!   (`lights::display_shader`), as the flashlight's always has. The flashlight is not one
@@ -190,6 +193,9 @@ pub enum LightShadowMode {
 }
 
 /// The row's choices, in the order the page and the INI keep them (the Sun shadows row's).
+/// An Ultra choice (the near lamps' maps at the Shadow resolution row's full side, 2048 or
+/// 4096, the far ones at 1024; 1.8 GB for nine lamps) was built and dropped on 2026-11-24:
+/// "basically not noticeable even at 4k native" [observed: a play test].
 pub const CHOICES: [&str; 3] = ["Off", "Performance", "Quality"];
 
 /// The ALC shadows row's choice: an index into [`CHOICES`] (0: off).
@@ -216,6 +222,9 @@ pub struct Tuning {
     /// Every light is drawn again in full every this many frames anyway (a safety net: a
     /// change the marks missed does not stay for good).
     pub refresh: u64,
+    /// The point lights nearest the camera kept in the near cube texture, the larger one
+    /// ([`cube_sides`]); the rest are in the far one. 0: one texture for all.
+    pub near: usize,
     /// At most this many transient lights (muzzle flashes, explosions: [`SourceKind`]) cast
     /// at once, nearest first; they do not count against [`Tuning::lights`].
     pub transients: usize,
@@ -227,8 +236,8 @@ pub struct Tuning {
 /// The tuning of a choice; `None` for Off.
 pub fn tuning(choice: usize) -> Option<Tuning> {
     match choice {
-        1 => Some(Tuning { lights: 16, draws: 3, refresh: 3600, transients: 1, transient_draws: 1 }),
-        2 => Some(Tuning { lights: 32, draws: 8, refresh: 3600, transients: 2, transient_draws: 2 }),
+        1 => Some(Tuning { lights: 16, draws: 3, refresh: 3600, near: 0, transients: 1, transient_draws: 1 }),
+        2 => Some(Tuning { lights: 32, draws: 8, refresh: 3600, near: 8, transients: 2, transient_draws: 2 }),
         _ => None,
     }
 }
@@ -652,6 +661,12 @@ struct LampState {
     dynamic_faces: u8,
     /// Frames its marked faces in view have waited for a draw ([`draw_priority`]).
     waiting: u32,
+    /// In the far cube texture ([`Tuning::near`]), not the near one.
+    far: bool,
+    /// It changed cube texture ([`RESLOTS_PER_FRAME`]): its new cubes hold nothing of it, so
+    /// it draws all its faces at once with every caster (no cache), in the frame of the
+    /// change, and its shadow never leaves the picture; the caches follow.
+    reslot: bool,
     /// Casters the renderer could not draw into its maps at its last draw, the frame it
     /// draws again in full for them (0: none due) and how often it has ([`SETTLE_FRAMES`]).
     unready: u32,
@@ -670,10 +685,17 @@ struct LampState {
 #[derive(Resource, Default)]
 struct LampShadowState {
     lamps: EntityHashMap<LampState>,
-    /// Stable slots of the casting point lights in the cube texture.
+    /// Stable slots of the casting point lights in the cube texture (the near one).
     slots: EntityHashMap<u32>,
     /// The cube texture's room, in lights; it only grows while a mode stays on.
     capacity: u32,
+    /// The same for the far cube texture ([`Tuning::near`]): a point light has a slot in
+    /// one of the two.
+    far_slots: EntityHashMap<u32>,
+    far_capacity: u32,
+    far_maps_key: Option<(usize, u32, bool)>,
+    /// The row's choice last frame.
+    choice_was: usize,
     /// Stable slots of the casting spot lights past the sun's cascades in its texture, and
     /// the room kept there for them; it only grows while a mode stays on.
     spot_slots: EntityHashMap<u32>,
@@ -767,6 +789,8 @@ pub struct Pass {
     /// Full redraws of lights whose maps were drawn without all their casters
     /// ([`SETTLE_FRAMES`]).
     pub settled: u64,
+    /// Lights that changed cube texture ([`RESLOTS_PER_FRAME`]).
+    pub reslots: u64,
     /// The renderer's reports behind them: views drawn with casters missing, and views
     /// drawn with none missing while a pipeline was being built.
     pub unready: [u64; 2],
@@ -1034,7 +1058,7 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
     let on = |b: bool| if b { "on" } else { "OFF" };
     let [served, candidates, filed, everywhere] = p.grid;
     format!(
-        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame; face culling ({}) {:.2} marked faces held out of view a frame; static cache ({}) {:.2} static redraws (faces) a frame, {:.2} dynamic recomposites a frame, {:.2} layer copies a frame, {} faces put back after a static redraw, {} of them drawn quietly, {} shapes became dynamic, {} draws lost out of view; {:.2} marked lights waited a frame for a draw, the longest {} frames; {} redraws for casters not ready ({} views drawn with casters missing, {} while a pipeline was built); loading-screen pre-draw ({}) {} lights",
+        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame; face culling ({}) {:.2} marked faces held out of view a frame; static cache ({}) {:.2} static redraws (faces) a frame, {:.2} dynamic recomposites a frame, {:.2} layer copies a frame, {} faces put back after a static redraw, {} of them drawn quietly, {} shapes became dynamic, {} draws lost out of view; {:.2} marked lights waited a frame for a draw, the longest {} frames; {} redraws for casters not ready ({} views drawn with casters missing, {} while a pipeline was built); {} lights changed cube texture; loading-screen pre-draw ({}) {} lights",
         per(p.steps[0]),
         per(p.steps[1]),
         per(p.steps[2]),
@@ -1063,6 +1087,7 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
         p.settled,
         p.unready[0],
         p.unready[1],
+        p.reslots,
         on(predraw_on()),
         p.predrawn
     )
@@ -1409,13 +1434,38 @@ fn casting_layers() -> RenderLayers {
     RenderLayers::from_layers(&[0, crate::sky::SHADOW_LAYER, crate::sky::BODY_LAYER])
 }
 
-/// The cube side for the Shadow resolution row's side: 512 with 2048 and 1024 with 4096;
-/// on Quality 1024 with either [engineering choice, 2026-11-24: with a lamp close over a
-/// caster a 512 map's texels showed as blocks along its shadow's edge, which moved block by
-/// block; four times the memory, [`cube_texture_mb`], logged].
-pub fn cube_side(directional: usize, quality: bool) -> usize {
-    if directional >= 4096 || quality { 1024 } else { 512 }
+/// The sides of the near and the far cube texture (0: no far texture) for a choice
+/// ([`CHOICES`]) and the Shadow resolution row's side [engineering choice, 2026-11-24]:
+///
+/// | Choice | Near | Far |
+/// |---|---|---|
+/// | Performance | 512 (1024 with Shadow resolution 4096) | none: one texture |
+/// | Quality | 1024 | 512 |
+///
+/// With a lamp close over a caster a 512 map's texels showed as blocks along its shadow's
+/// edge; such a lamp is a near one. A far lamp's shadow covers few pixels. A cube costs its
+/// side squared: Quality with every lamp at 1024 took 1.4 GB for 28 lamps with their
+/// static caches ([`cube_texture_mb`], logged), the near eight at 1024 and the rest at 512
+/// take 0.7 GB.
+pub fn cube_sides(choice: usize, directional: usize) -> (usize, usize) {
+    match choice {
+        2 => (1024, 512),
+        _ => (if directional >= 4096 { 1024 } else { 512 }, 0),
+    }
 }
+
+/// Which point lights are kept in the near cube texture: the `cap` nearest the camera,
+/// one already there keeping its place against one [`KEEP`] times nearer. `lights`: each
+/// with its distance to the camera and whether it is in the near texture now.
+pub fn near_set<T: Copy + Eq + std::hash::Hash>(lights: &[(T, f32, bool)], cap: usize) -> std::collections::HashSet<T> {
+    let mut ranked: Vec<(T, f32)> = lights.iter().map(|&(e, d, near)| (e, if near { d / KEEP } else { d })).collect();
+    ranked.sort_by(|a, b| a.1.total_cmp(&b.1));
+    ranked.into_iter().take(cap).map(|(e, _)| e).collect()
+}
+
+/// At most this many lights change cube texture in a frame: each draws all its faces in
+/// that frame, every caster in them [engineering choice: a pair swapping places].
+pub const RESLOTS_PER_FRAME: usize = 2;
 
 /// Megabytes (10^6 bytes) of a cube texture of `cubes` cubes of `side` texels square, 32-bit
 /// depth (`CORE_3D_SHADOW_MAP_FORMAT`, Depth32Float): the static shadow cache costs as much
@@ -1546,6 +1596,10 @@ type Outputs<'w> = (
     ResMut<'w, LightShadowsIdle>,
 );
 
+/// What the casting lights' log line was last written for: the choice, the point and spot
+/// lights casting, and the rooms of the near and far cube textures.
+type Logged = (usize, usize, usize, u32, u32);
+
 /// Choose the lights that cast, mark what changed in their maps, choose which draw this
 /// frame, and set them up for Bevy and the patched renderer.
 #[allow(clippy::too_many_arguments)]
@@ -1565,7 +1619,7 @@ fn shadow_lights(
     names: Query<&Name>,
     joints: Query<Ref<GlobalTransform>>,
     (mut removed, every): (RemovedComponents<Mesh3d>, Query<EveryCaster, EveryCasterFilter>),
-    mut logged: Local<Option<(usize, usize, usize)>>,
+    mut logged: Local<Option<Logged>>,
 ) {
     let _timed = Timed::start(0);
     let tune = tuning(settings.choice).map(|t| Tuning { refresh: refresh_override().unwrap_or(t.refresh), draws: draws_override().unwrap_or(t.draws), ..t });
@@ -1623,8 +1677,15 @@ fn shadow_lights(
         }
         _ => (EntityHashSet::default(), EntityHashSet::default()),
     };
+    let (near_side, far_side) = cube_sides(settings.choice, directional.as_ref().map_or(2048, |d| d.size));
+    // Another choice: other sides, so both textures are made anew, with room for what casts
+    // now and no more (a room only grows while a choice stays).
+    if state.choice_was != settings.choice {
+        (state.choice_was, state.capacity, state.far_capacity) = (settings.choice, 0, 0);
+    }
+    let far_side = if tune.is_some_and(|t| t.near > 0) { far_side } else { 0 };
     if tune.is_some() {
-        let side = cube_side(directional.as_ref().map_or(2048, |d| d.size), crate::light_shadow_detail::detailed(settings.choice));
+        let side = near_side;
         state.cube_before.get_or_insert(cube.size);
         if cube.size != side {
             cube.size = side;
@@ -1685,6 +1746,8 @@ fn shadow_lights(
             quiet: 0,
             dynamic_faces: 0,
             waiting: 0,
+            far: false,
+            reslot: false,
             unready: 0,
             settle_at: 0,
             settle_step: 0,
@@ -1719,10 +1782,60 @@ fn shadow_lights(
         }
         (entry.step, entry.map_scale) = (step, scale);
         state.pass.steps[usize::from(step.min(2))] += 1;
-        assign_slot(if is_point { &mut state.slots } else { &mut state.spot_slots }, e);
+        if !is_point {
+            assign_slot(&mut state.spot_slots, e);
+        }
         // A transient was chosen only if the camera sees it this frame (a new light's
         // `ViewVisibility` is still false).
         lamps.push(Lamp { entity: e, at: t.translation(), range, spot: !is_point, seen: transient || seen.get(), gap, transient, step, map_scale: scale });
+    }
+    // The point lights' cube texture: the nearest `near` in the near one, the rest in the
+    // far one ([`near_set`]); transients in the near one, apart from the cap. A light that
+    // has to change keeps its slot until it can change in sight of the camera, a few a
+    // frame, and then draws at once ([`LampState::reslot`]).
+    {
+        let near_cap = tune.map_or(0, |t| t.near);
+        let tiered = near_cap > 0 && far_side > 0;
+        let ranked: Vec<(Entity, f32, bool)> = lamps
+            .iter()
+            .filter(|l| !l.spot && !l.transient)
+            .map(|l| (l.entity, at.map_or(0.0, |a| l.at.distance(a)), state.slots.contains_key(&l.entity)))
+            .collect();
+        let near = near_set(&ranked, near_cap);
+        let mut reslots = 0;
+        // Those leaving the near texture first: they make room there.
+        let mut order: Vec<&Lamp> = lamps.iter().filter(|l| !l.spot).collect();
+        order.sort_by_key(|l| near.contains(&l.entity));
+        for l in order {
+            let want_far = tiered && !l.transient && !near.contains(&l.entity);
+            let Some(s) = state.lamps.get_mut(&l.entity) else { continue };
+            let slotted = state.slots.contains_key(&l.entity) || state.far_slots.contains_key(&l.entity);
+            if slotted && s.far == want_far {
+                continue;
+            }
+            // The near texture's room for the lamps is the cap's: no slot free, no move.
+            let room = want_far || !tiered || state.slots.len() < near_cap + tune.map_or(0, |t| t.transients);
+            if slotted && (s.fresh || (l.seen && reslots < RESLOTS_PER_FRAME && room)) {
+                state.slots.remove(&l.entity);
+                state.far_slots.remove(&l.entity);
+                if !s.fresh {
+                    (s.reslot, s.dirty, s.static_dirty, s.pending) = (true, ALL_FACES, ALL_FACES, 0);
+                    reslots += 1;
+                    state.pass.reslots += 1;
+                }
+            } else if slotted {
+                continue;
+            }
+            s.far = if slotted || room { want_far } else { true };
+            assign_slot(if s.far { &mut state.far_slots } else { &mut state.slots }, l.entity);
+        }
+        // A cube's texels across a unit at a unit's distance follow its texture's side.
+        for l in lamps.iter_mut().filter(|l| !l.spot) {
+            if let Some(s) = state.lamps.get_mut(&l.entity) {
+                let scale = map_scale(if s.far { far_side } else { near_side } as f32, 1.0);
+                (l.map_scale, s.map_scale) = (scale, scale);
+            }
+        }
     }
     // The fades: rising once a light's maps were first drawn (a transient's full at once),
     // falling while it leaves (with a mode on; turned off, every light is dropped at once).
@@ -1748,10 +1861,15 @@ fn shadow_lights(
         }
     });
     state.slots.retain(|e, _| state.lamps.get(e).is_some_and(|s| !s.spot));
+    state.far_slots.retain(|e, _| state.lamps.get(e).is_some_and(|s| !s.spot));
     state.spot_slots.retain(|e, _| state.lamps.get(e).is_some_and(|s| s.spot));
     state.capacity = match tune {
         Some(_) => grown_room(state.capacity, state.slots.values().copied(), 0),
         None => 0,
+    };
+    state.far_capacity = match tune {
+        Some(_) if far_side > 0 => grown_room(state.far_capacity, state.far_slots.values().copied(), 0),
+        _ => 0,
     };
     // The spot lights' room also holds the other shadowed spot lights (the flashlight), so
     // switching one on or off does not change the texture; none while no lamp spot casts.
@@ -1764,28 +1882,38 @@ fn shadow_lights(
     // The static cache gives the cube texture another use (copied into): another texture.
     let point_key = (cube.size, state.capacity, cache_on);
     let spot_key = (directional.as_ref().map_or(2048, |d| d.size), state.spot_capacity, inputs.cascades);
+    let far_key = (far_side, state.far_capacity, cache_on);
     let new_point = state.point_maps_key.is_some_and(|k| k != point_key);
     let new_spot = state.spot_maps_key.is_some_and(|k| k != spot_key);
-    (state.point_maps_key, state.spot_maps_key) = match tune {
-        Some(_) => (Some(point_key), Some(spot_key)),
-        None => (None, None),
+    // The far texture's first making (no room before) holds nothing to lose.
+    let new_far = state.far_maps_key.is_some_and(|k| k != far_key && k.1 > 0);
+    (state.point_maps_key, state.spot_maps_key, state.far_maps_key) = match tune {
+        Some(_) => (Some(point_key), Some(spot_key), Some(far_key)),
+        None => (None, None, None),
     };
-    if new_point || new_spot {
+    if new_point || new_spot || new_far {
         state.lamps.retain(|_, s| {
-            let made_anew = if s.spot { new_spot } else { new_point };
+            let made_anew = if s.spot {
+                new_spot
+            } else if s.far {
+                new_far
+            } else {
+                new_point
+            };
             if !made_anew {
                 return true;
             }
             if s.leaving {
                 return false;
             }
-            (s.fresh, s.dirty, s.static_dirty, s.pending) = (true, ALL_FACES, ALL_FACES, 0);
+            (s.fresh, s.reslot, s.dirty, s.static_dirty, s.pending) = (true, false, ALL_FACES, ALL_FACES, 0);
             if !s.transient {
                 s.fade = 0.0;
             }
             true
         });
         state.slots.retain(|e, _| state.lamps.contains_key(e));
+        state.far_slots.retain(|e, _| state.lamps.contains_key(e));
         state.spot_slots.retain(|e, _| state.lamps.contains_key(e));
     }
 
@@ -2064,7 +2192,7 @@ fn shadow_lights(
     order.sort_by_key(|&i| {
         let s = state.lamps.get(&lamps[i].entity);
         (
-            !s.is_some_and(|s| s.fresh),
+            !s.is_some_and(|s| s.fresh || s.reslot),
             !s.is_some_and(|s| s.pending != 0),
             !s.is_some_and(|s| s.deferred & in_view[i] != 0),
             std::cmp::Reverse(s.map_or(0, |s| draw_priority(s.waiting, lamps[i].gap <= 0.0))),
@@ -2094,7 +2222,7 @@ fn shadow_lights(
         // draws once and is held for the rest of its short life: a flash moved by the gun's
         // recoil was drawn 3.5 times on average, measured in the Prospector Saloon gunfight
         // [engineering choice, 2026-11-18].
-        let want = if hold_all || s.fresh {
+        let want = if hold_all || s.fresh || s.reslot {
             all
         } else if l.transient {
             0
@@ -2106,7 +2234,9 @@ fn shadow_lights(
         // Only a light the camera saw last frame (a transient: sees this frame) is drawn by
         // Bevy this frame.
         let budget = if l.transient { &mut transient_draws } else { &mut draws };
-        let draw = if want != 0 && l.seen && takes_budget(budget, hold_all || predraw) { want } else { 0 };
+        // A light that changed cube texture draws whatever the frame's draws: until it has,
+        // its new cubes cast nothing.
+        let draw = if want != 0 && l.seen && takes_budget(budget, hold_all || predraw || s.reslot) { want } else { 0 };
         s.waiting = if want != 0 && draw == 0 { s.waiting.saturating_add(1) } else { 0 };
         if s.waiting > 0 && l.seen {
             state.pass.waited += 1;
@@ -2115,7 +2245,15 @@ fn shadow_lights(
         if draw != 0 {
             // With the static cache: faces whose cache is out of date drawn into it (then
             // copied out, or quietly), the others composited from it.
-            let (to_static, composite, quiet) = if s.fresh { face_modes(draw, all, 0, 0, !s.plain) } else { face_modes(draw, s.static_dirty, s.pending, s.dynamic_faces, !s.plain) };
+            // A light that changed cube texture draws every caster into the sampled cubes
+            // (no cache this once: `static_dirty` stays, and the caches follow next frame).
+            let (to_static, composite, quiet) = if s.reslot {
+                (0, 0, 0)
+            } else if s.fresh {
+                face_modes(draw, all, 0, 0, !s.plain)
+            } else {
+                face_modes(draw, s.static_dirty, s.pending, s.dynamic_faces, !s.plain)
+            };
             (s.to_static, s.composite, s.quiet) = (to_static, composite, quiet);
             if to_static != 0 {
                 out.to_static.insert(l.entity, to_static);
@@ -2143,8 +2281,8 @@ fn shadow_lights(
             s.static_dirty &= !(if s.plain { draw } else { to_static });
             s.pending = (s.pending & !draw) | quiet;
             s.dirty = (s.dirty & !draw) | quiet | (s.static_dirty & draw);
-            (s.drew, s.drew_fresh) = (draw, s.fresh);
-            s.fresh = false;
+            (s.drew, s.drew_fresh) = (draw, s.fresh || s.reslot);
+            (s.fresh, s.reslot) = (false, false);
             if draw == all {
                 s.at = l.at;
             }
@@ -2245,6 +2383,12 @@ fn shadow_lights(
     if out.point_capacity != state.capacity {
         out.point_capacity = state.capacity;
     }
+    if out.far_slots != state.far_slots {
+        out.far_slots.clone_from(&state.far_slots);
+    }
+    if (out.far_capacity, out.far_size) != (state.far_capacity, far_side as u32) {
+        (out.far_capacity, out.far_size) = (state.far_capacity, far_side as u32);
+    }
     if out.spot_slots != state.spot_slots {
         out.spot_slots.clone_from(&state.spot_slots);
     }
@@ -2263,22 +2407,27 @@ fn shadow_lights(
     removed.clear();
     idle.frames = if tune.is_some() { 0 } else { idle.frames.saturating_add(1).min(WIND_DOWN_FRAMES) };
 
-    let now = (settings.choice, points, spots);
+    let now = (settings.choice, points, spots, state.capacity, state.far_capacity);
     if *logged != Some(now) {
         *logged = Some(now);
         match tune {
             None => info!("light shadows: off"),
             Some(t) => info!(
-                "light shadows: {} cast ({points} point, {spots} spot lights) within {reach:.0} units, {} at most; cubes {}x{}, room for {}; spot maps room for {}; transients (muzzle flashes, explosions) within {:.0} units, {} at most; static shadow cache {}",
+                "light shadows: {} cast ({points} point, {spots} spot lights) within {reach:.0} units, {} at most; cubes {}x{}, room for {}; far cubes {far_side}x{far_side}, room for {}; spot maps room for {}; transients (muzzle flashes, explosions) within {:.0} units, {} at most; static shadow cache {}",
                 points + spots,
                 t.lights,
                 cube.size,
                 cube.size,
                 state.capacity,
+                state.far_capacity,
                 state.spot_capacity,
                 transient_reach(reach),
                 t.transients,
-                if cache_on { format!("on ({:.0} MB)", cube_texture_mb(cube.size, state.capacity)) } else { "off".to_string() }
+                {
+                    // The cubes of both textures; the static cache costs as much again.
+                    let cubes = cube_texture_mb(cube.size, state.capacity) + cube_texture_mb(far_side, state.far_capacity);
+                    if cache_on { format!("on ({cubes:.0} MB), the cubes {cubes:.0} MB more") } else { format!("off, the cubes {cubes:.0} MB") }
+                }
             ),
         }
     }
@@ -2362,6 +2511,8 @@ fn skip_fixtures(
             if let Some(s) = state.lamps.get_mut(&light) {
                 s.dirty |= s.drew;
                 if s.drew_fresh {
+                    // Its first draw, or its draw after a change of cube texture: its cubes
+                    // hold nothing of it yet.
                     (s.fresh, s.static_dirty) = (true, s.drew);
                 } else {
                     s.static_dirty |= s.to_static;
@@ -2499,6 +2650,8 @@ mod tests {
     #[test]
     fn the_choices_are_the_sun_shadows_rows_and_each_on_choice_is_tuned() {
         assert_eq!(CHOICES, crate::shadow_rate::SUN_SHADOW_CHOICES);
+        assert_eq!(tuning(3), None);
+        assert!(tuning(2).unwrap().near > 0 && tuning(1).unwrap().near == 0, "Quality keeps two sizes of maps, Performance one texture");
         assert_eq!(tuning(0), None);
         let (p, q) = (tuning(1).unwrap(), tuning(2).unwrap());
         assert!(q.lights > p.lights && q.draws > p.draws, "Quality draws more");
@@ -2663,10 +2816,21 @@ mod tests {
         assert_eq!(free_slot([0, 1, 3].into_iter()), 2);
         assert_eq!(free_slot([3, 1, 0, 2].into_iter()), 4);
         assert_eq!(free_slot([1, 2].into_iter()), 0);
-        assert_eq!(cube_side(2048, false), 512);
-        assert_eq!(cube_side(4096, false), 1024);
-        assert_eq!(cube_side(2048, true), 1024, "Quality");
-        assert_eq!(cube_side(4096, true), 1024);
+        assert_eq!(cube_sides(1, 2048), (512, 0));
+        assert_eq!(cube_sides(1, 4096), (1024, 0));
+        assert_eq!(cube_sides(2, 2048), (1024, 512));
+        assert_eq!(cube_sides(2, 4096), (1024, 512));
+        // The near eight of 28 lamps at 1024 and the rest at 512, with their caches, against
+        // all at 1024.
+        let tiered = 2.0 * (cube_texture_mb(1024, 8) + cube_texture_mb(512, 20));
+        assert!(tiered < 0.5 * 2.0 * cube_texture_mb(1024, 28), "{tiered}");
+        // The nearest stay near; one in the near texture keeps its place against one a
+        // little nearer, not against one much nearer.
+        let lights = [(1, 100.0, true), (2, 300.0, true), (3, 280.0, false), (4, 900.0, false)];
+        assert_eq!(near_set(&lights, 2), [1, 2].into_iter().collect());
+        let lights = [(1, 100.0, true), (2, 300.0, true), (3, 200.0, false), (4, 900.0, false)];
+        assert_eq!(near_set(&lights, 2), [1, 3].into_iter().collect());
+        assert_eq!(near_set(&lights, 8).len(), 4);
     }
 
     #[test]
@@ -2823,6 +2987,8 @@ mod tests {
             quiet: 0,
             dynamic_faces: 0,
             waiting: 0,
+            far: false,
+            reslot: false,
             unready: 0,
             settle_at: 0,
             settle_step: 0,
@@ -2960,6 +3126,7 @@ mod tests {
             waited_longest: 3,
             settled: 6,
             unready: [9, 2],
+            reslots: 5,
             predrawn: 7,
         };
         let s = pass_summary(&p, 100);
@@ -2969,7 +3136,7 @@ mod tests {
         assert!(s.contains("distance fade (on) 2.5 lights fading a frame"), "{s}");
         assert!(s.contains("face culling (on) 0.30 marked faces held out of view a frame;"), "{s}");
         assert!(
-            s.contains("static cache (on) 0.12 static redraws (faces) a frame, 0.40 dynamic recomposites a frame, 0.52 layer copies a frame, 5 faces put back after a static redraw, 4 of them drawn quietly, 2 shapes became dynamic, 1 draws lost out of view; 0.25 marked lights waited a frame for a draw, the longest 3 frames; 6 redraws for casters not ready (9 views drawn with casters missing, 2 while a pipeline was built);"),
+            s.contains("static cache (on) 0.12 static redraws (faces) a frame, 0.40 dynamic recomposites a frame, 0.52 layer copies a frame, 5 faces put back after a static redraw, 4 of them drawn quietly, 2 shapes became dynamic, 1 draws lost out of view; 0.25 marked lights waited a frame for a draw, the longest 3 frames; 6 redraws for casters not ready (9 views drawn with casters missing, 2 while a pipeline was built); 5 lights changed cube texture;"),
             "{s}"
         );
         assert!(s.ends_with("loading-screen pre-draw (on) 7 lights"), "{s}");

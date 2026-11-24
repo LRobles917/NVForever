@@ -703,6 +703,19 @@ docs/design/graphics-enhanced.md §3.17 "Rewrite of 2026-11-24"):
   kept for the game in `NVF_UNREADY` (`nvf_take_unready_shadow_lights`: light, casters,
   building). Upstream draws such a view again next frame and the caster appears; a light
   the game holds is not drawn again unless the game marks it.
+- **ALCS far maps**, marked `NVForever ALCS far maps`, in `src/render/light.rs`,
+  `mesh_view_bindings.rs`, `mesh_view_bindings.wesl`, `shadow_sampling.wesl` and
+  `shadows.wesl`: `HoldLightShadowMaps::far_slots`, `far_capacity` and `far_size` put point
+  lights' cubes in a second cube texture of another side (and a static cache of its own),
+  bound to the mesh views at 45 (the first texture's view while there is none). A far
+  light's cube number is `NVF_FAR_CUBE` (128) + its slot: the number keys the per-layer
+  records and attachment caches, its low seven bits are the slot in its texture, and bits
+  16..23 of the light's flags carry it + 1 (`nvf_point_far`). The first texture's cubes are
+  counted from the shadowed lights that draw into it alone (upstream's count of all of them
+  made the texture anew whenever far lights drew). The game's own sampler reads the light's
+  texture (`nvf_point_compare`, `nvf_point_depth`, `nvf_point_side`), and the normal bias,
+  scaled by the first texture's texel, is scaled again for a far light
+  (`nvf_point_texel_scale`). Upstream has one size for every point light's cube.
 - **ALCS quiet static draws**, marked `NVForever ALCS quiet static draws`, in
   `src/render/light.rs`: `HoldLightShadowMaps::static_quiet` (bits per cube face, within
   `to_static`) and `NvfStaticShadowFace::quiet`. A quiet face is drawn into the static

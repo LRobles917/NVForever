@@ -1041,6 +1041,9 @@ pub struct ShadowView {
 pub struct ViewShadowBindings {
     pub point_light_depth_texture: Texture,
     pub point_light_depth_texture_view: TextureView,
+    /// NVForever ALCS far maps: the far cube texture's array view (the first texture's
+    /// while there is none).
+    pub nvf_point_light_far_depth_texture_view: TextureView,
     pub directional_light_depth_texture: Texture,
     pub directional_light_depth_texture_view: TextureView,
 }
@@ -1389,12 +1392,28 @@ pub fn prepare_lights(
     // shadowed point light takes the lowest slot left this frame.
     let mut nvf_cube_of = EntityHashMap::<usize>::default();
     let mut nvf_cubes = point_light_shadow_maps_count;
+    // NVForever ALCS far maps: the far texture's cubes and side.
+    let mut nvf_far_cubes = 0usize;
+    let nvf_far_size = hold_lights.as_deref().map_or(0, |hold| hold.far_size);
+    // The shadowed point lights that draw into the first texture this frame: Bevy's count
+    // less the far texture's (it sized the first texture by all of them, which made it anew
+    // whenever far lights drew).
+    let mut nvf_near_shadow_maps_count = point_light_shadow_maps_count;
     if let Some(hold) = hold_lights.as_deref() {
         let mut used: HashSet<u32> = hold.slots.values().copied().collect();
         let mut next_free = 0u32;
         for entity in point_light_entities.iter() {
             let (_, main_entity, light, ..) = point_lights.get(*entity).unwrap();
             if light.spot_light_angles.is_some() {
+                continue;
+            }
+            // NVForever ALCS far maps: a light of the far texture.
+            if let Some(&slot) = hold.far_slots.get(&main_entity.id()).filter(|_| nvf_far_size > 0) {
+                nvf_cube_of.insert(*entity, NVF_FAR_CUBE + slot as usize);
+                nvf_far_cubes = nvf_far_cubes.max(slot as usize + 1);
+                if light.shadow_maps_enabled {
+                    nvf_near_shadow_maps_count = nvf_near_shadow_maps_count.saturating_sub(1);
+                }
                 continue;
             }
             let slot = match hold.slots.get(&main_entity.id()) {
@@ -1410,13 +1429,17 @@ pub fn prepare_lights(
             };
             nvf_cube_of.insert(*entity, slot as usize);
         }
+        if nvf_far_size > 0 {
+            nvf_far_cubes = nvf_far_cubes.max(hold.far_capacity as usize).min(NVF_FAR_CUBE - 1).min(max_texture_cubes);
+        }
         nvf_cubes = nvf_cube_of
             .values()
+            .filter(|cube| !nvf_far(**cube))
             .map(|slot| slot + 1)
             .max()
             .unwrap_or(0)
             .max(hold.point_capacity as usize)
-            .max(point_light_shadow_maps_count)
+            .max(nvf_near_shadow_maps_count)
             .min(max_texture_cubes);
     }
 
@@ -1604,7 +1627,7 @@ pub fn prepare_lights(
                 width: point_light_shadow_map.size as u32,
                 height: point_light_shadow_map.size as u32,
                 // NVForever held light shadow maps: room for every slot.
-                depth_or_array_layers: nvf_cubes.max(point_light_shadow_maps_count).max(1) as u32 * 6,
+                depth_or_array_layers: nvf_cubes.max(nvf_near_shadow_maps_count).max(1) as u32 * 6,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -1632,7 +1655,7 @@ pub fn prepare_lights(
                 size: Extent3d {
                     width: point_light_shadow_map.size as u32,
                     height: point_light_shadow_map.size as u32,
-                    depth_or_array_layers: nvf_cubes.max(point_light_shadow_maps_count).max(1) as u32 * 6,
+                    depth_or_array_layers: nvf_cubes.max(nvf_near_shadow_maps_count).max(1) as u32 * 6,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
@@ -1646,7 +1669,53 @@ pub fn prepare_lights(
     });
     let nvf_static_texture_id = nvf_static_texture.as_ref().map(|t| t.texture.id());
 
+    // NVForever ALCS far maps: the second cube texture and its static cache, while the game
+    // keeps lights in it.
+    let nvf_far_descriptor = |label: &'static str, usage: TextureUsages| TextureDescriptor {
+        size: Extent3d {
+            width: nvf_far_size,
+            height: nvf_far_size,
+            depth_or_array_layers: nvf_far_cubes.max(1) as u32 * 6,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: CORE_3D_SHADOW_MAP_FORMAT,
+        label: Some(label),
+        usage,
+        view_formats: &[],
+    };
+    let nvf_far_texture = (nvf_far_cubes > 0).then(|| {
+        texture_cache.get(
+            &render_device,
+            nvf_far_descriptor(
+                "nvf_point_light_far_shadow_map_texture",
+                if nvf_static_cache {
+                    TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST
+                } else {
+                    TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING
+                },
+            ),
+        )
+    });
+    let nvf_far_static_texture = (nvf_far_cubes > 0 && nvf_static_cache).then(|| {
+        texture_cache.get(
+            &render_device,
+            nvf_far_descriptor(
+                "nvf_point_light_far_static_shadow_cache",
+                TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            ),
+        )
+    });
+    let nvf_far_texture_id = nvf_far_texture.as_ref().map(|t| t.texture.id());
+    let nvf_far_static_texture_id = nvf_far_static_texture.as_ref().map(|t| t.texture.id());
+
     let nvf_point_texture_id = point_light_depth_texture.texture.id();
+    // NVForever ALCS far maps: the sampled texture a cube number is in.
+    let nvf_texture_id_of = |cube: usize| match nvf_far_texture_id {
+        Some(far) if nvf_far(cube) => far,
+        _ => nvf_point_texture_id,
+    };
     // NVForever light view counts.
     if *nvf_last_point_texture != Some(nvf_point_texture_id) {
         nvf_event(NVF_NEW_POINT_TEXTURE, u64::from(nvf_last_point_texture.is_some()));
@@ -1760,7 +1829,7 @@ pub fn prepare_lights(
                             if light.spot_light_angles.is_none()
                                 && (0..6).all(|face| {
                                     nvf_light_record.point.get(&((cube * 6 + face) as u32))
-                                        == Some(&(nvf_main, nvf_point_texture_id))
+                                        == Some(&(nvf_main, nvf_texture_id_of(cube)))
                                 }) =>
                         {
                             (flags | PointLightFlags::SHADOW_MAPS_ENABLED).bits()
@@ -1869,17 +1938,18 @@ pub fn prepare_lights(
         // upstream.
         *nvf_cache = NvfShadowViewCache::default();
     }
-    if nvf_cache.point_texture != Some(nvf_point_texture_id) {
-        nvf_cache.point_texture = Some(nvf_point_texture_id);
+    if nvf_cache.point_texture != Some((nvf_point_texture_id, nvf_far_texture_id)) {
+        nvf_cache.point_texture = Some((nvf_point_texture_id, nvf_far_texture_id));
         nvf_cache.point_array = None;
+        nvf_cache.far_array = None;
         nvf_cache.point_layers.clear();
         // NVForever static shadow cache: the sampled layers' loading attachments.
         nvf_cache.load_layers.clear();
     }
     // NVForever static shadow cache: the cache's layer attachments, kept while it is the same
     // texture and set to clear again each frame.
-    if nvf_cache.static_texture != nvf_static_texture_id {
-        nvf_cache.static_texture = nvf_static_texture_id;
+    if nvf_cache.static_texture != (nvf_static_texture_id, nvf_far_static_texture_id) {
+        nvf_cache.static_texture = (nvf_static_texture_id, nvf_far_static_texture_id);
         nvf_cache.static_layers.clear();
     }
     for attachment in nvf_cache.static_layers.values() {
@@ -1933,6 +2003,28 @@ pub fn prepare_lights(
                 array_layer_count: None,
             })
     }).clone();
+
+    // NVForever ALCS far maps: the far texture's cube array view for the mesh views' binding
+    // (the first texture's while there is none: the binding is always there).
+    let nvf_far_depth_texture_view = match nvf_far_texture.as_ref() {
+        Some(far) => nvf_cache
+            .far_array
+            .get_or_insert_with(|| {
+                far.texture.create_view(&TextureViewDescriptor {
+                    label: Some("nvf_point_light_far_shadow_map_array_texture_view"),
+                    format: None,
+                    dimension: Some(TextureViewDimension::CubeArray),
+                    usage: None,
+                    aspect: TextureAspect::DepthOnly,
+                    base_mip_level: 0,
+                    mip_level_count: None,
+                    base_array_layer: 0,
+                    array_layer_count: None,
+                })
+            })
+            .clone(),
+        None => point_light_depth_texture_view.clone(),
+    };
 
     // NVForever held light shadow maps: the directional shadow texture is taken above.
 
@@ -1997,9 +2089,16 @@ pub fn prepare_lights(
         }
 
         // NVForever held light shadow maps: the views' cube and texture.
+        // NVForever ALCS far maps: the texture and side of the light's cube.
+        let nvf_light_far = nvf_cube_of.get(light_entity).is_some_and(|cube| nvf_far(*cube)) && nvf_far_texture.is_some();
+        let nvf_light_texture = match nvf_far_texture.as_ref() {
+            Some(far) if nvf_light_far => far,
+            _ => &point_light_depth_texture,
+        };
+        let nvf_light_size = if nvf_light_far { nvf_far_size } else { point_light_shadow_map.size as u32 };
         let nvf_view_key = (
             nvf_cube_of.get(light_entity).copied().unwrap_or(usize::MAX),
-            nvf_point_texture_id,
+            nvf_light_texture.texture.id(),
         );
         let nvf_views_stale = hold_lights.is_some()
             && nvf_light_record.views.insert(*light_entity, nvf_view_key) != Some(nvf_view_key);
@@ -2062,9 +2161,9 @@ pub fn prepare_lights(
                     point_light_frusta,
                     &light_view_entities,
                 ),
-                &point_light_depth_texture,
+                nvf_light_texture,
                 (light_entity, light_main_entity, light, light_render_layers),
-                point_light_shadow_map.size as u32,
+                nvf_light_size,
                 gpu_preprocessing_support.max_supported_mode,
                 nvf_cube_of.get(light_entity).copied(),
             );
@@ -2083,9 +2182,9 @@ pub fn prepare_lights(
                     point_light_frusta,
                     &point_and_spot_light_view_entities.0,
                 ),
-                &point_light_depth_texture,
+                nvf_light_texture,
                 (light_entity, light_main_entity, light, light_render_layers),
-                point_light_shadow_map.size as u32,
+                nvf_light_size,
                 gpu_preprocessing_support.max_supported_mode,
                 nvf_cube_of.get(light_entity).copied(),
             );
@@ -2109,7 +2208,14 @@ pub fn prepare_lights(
                     .get(light_entity)
                     .unwrap()
             });
-            let drawn_with = (*light_main_entity, nvf_point_texture_id);
+            let drawn_with = (*light_main_entity, nvf_light_texture.texture.id());
+            // NVForever ALCS far maps: the static cache of the light's texture.
+            let (nvf_light_static, nvf_light_static_id) = if nvf_light_far {
+                (nvf_far_static_texture.as_ref(), nvf_far_static_texture_id)
+            } else {
+                (nvf_static_texture.as_ref(), nvf_static_texture_id)
+            };
+            let nvf_has_slot = nvf_cube_of.contains_key(light_entity);
             // NVForever static shadow cache: the faces drawn into the cache, and those
             // composited from it, this frame; the faces that carry the component.
             let main_id = light_main_entity.id();
@@ -2132,19 +2238,22 @@ pub fn prepare_lights(
                     nvf_light_record.point.insert(layer, drawn_with);
                     // NVForever static shadow cache: how this face is drawn.
                     let bit = 1u8 << face;
-                    let face_copy = match (&nvf_static_texture, nvf_static_texture_id) {
+                    // NVForever ALCS far maps: `layer` is the cube number's (the records' and the
+                    // attachments' key); the layer in the light's texture is its slot's.
+                    let nvf_layer = (if nvf_has_slot { nvf_slot(cube) } else { cube } * 6 + face) as u32;
+                    let face_copy = match (nvf_light_static, nvf_light_static_id) {
                         (Some(cache), Some(cache_id)) if (to_static | on_static) & bit != 0 => {
                             let copy = NvfLayerCopy {
                                 cache: cache.texture.clone(),
-                                sampled: point_light_depth_texture.texture.clone(),
-                                layer,
-                                size: point_light_shadow_map.size as u32,
+                                sampled: nvf_light_texture.texture.clone(),
+                                layer: nvf_layer,
+                                size: nvf_light_size,
                             };
                             if to_static & bit != 0 {
                                 // Drawn into the cache (cleared), then copied out after.
                                 nvf_light_record.static_point.insert(layer, (*light_main_entity, cache_id));
                                 nvf_event(NVF_STATIC_DRAWS, 1);
-                                let attachment = nvf_static_layer_attachment(&mut nvf_cache.static_layers, &cache.texture, layer, true);
+                                let attachment = nvf_static_layer_attachment(&mut nvf_cache.static_layers, &cache.texture, layer, nvf_layer, true);
                                 // NVForever ALCS quiet static draws: a face in
                                 // `static_quiet` is not copied out; the game composites
                                 // it next, so its moving casters never leave the picture.
@@ -2153,7 +2262,7 @@ pub fn prepare_lights(
                             } else if nvf_light_record.static_point.get(&layer) == Some(&(*light_main_entity, cache_id)) {
                                 // Copied in from the cache first, then drawn over (loaded).
                                 nvf_event(NVF_STATIC_COMPOSITES, 1);
-                                let attachment = nvf_static_layer_attachment(&mut nvf_cache.load_layers, &point_light_depth_texture.texture, layer, false);
+                                let attachment = nvf_static_layer_attachment(&mut nvf_cache.load_layers, &nvf_light_texture.texture, layer, nvf_layer, false);
                                 Some(NvfStaticShadowFace { attachment, copy, after: false, quiet: false })
                             } else {
                                 // The cache's layer holds no static map of this light: drawn
@@ -2724,6 +2833,7 @@ pub fn prepare_lights(
             ViewShadowBindings {
                 point_light_depth_texture: point_light_depth_texture.texture.clone(),
                 point_light_depth_texture_view: point_light_depth_texture_view.clone(),
+                nvf_point_light_far_depth_texture_view: nvf_far_depth_texture_view.clone(),
                 directional_light_depth_texture: directional_light_depth_texture.texture.clone(),
                 directional_light_depth_texture_view: directional_light_depth_texture_view.clone(),
             },
@@ -2829,10 +2939,13 @@ fn create_point_shadow_maps(
         .zip(light_view_entities.iter().copied())
         .enumerate()
     {
-        let base_array_layer = (light_index * 6 + face_index) as u32;
+        // NVForever ALCS far maps: the attachment's key is the cube number's, the layer the
+        // slot's in its texture.
+        let nvf_key = (light_index * 6 + face_index) as u32;
+        let base_array_layer = (if nvf_cube.is_some() { nvf_slot(light_index) } else { light_index } * 6 + face_index) as u32;
 
         let depth_attachment = point_light_depth_attachments
-            .entry(base_array_layer)
+            .entry(nvf_key)
             .or_insert_with(|| {
                 // NVForever light view counts (the attachments are kept: cached shadow views).
                 nvf_event(NVF_TEXTURE_VIEWS, 1);
@@ -3945,6 +4058,31 @@ pub struct HoldLightShadowMaps {
     /// light): a lamp given a soft size of 24 units got a wider, dimmer highlight, wrong
     /// within 24 units of it, and popped when the size was switched.
     pub soft_size: EntityHashMap<f32>,
+    /// NVForever ALCS far maps (2026-11-24): stable slots of point lights whose cubes are in
+    /// a second cube texture, `far_size` texels a side with room for `far_capacity` lights,
+    /// kept beside the first (whose side is `PointLightShadowMap::size`) with a static cache
+    /// of its own. A light is in `slots` or in `far_slots`, never both. The game keeps the
+    /// lights near the camera in the first and the rest in the second, smaller one: a cube
+    /// costs its side squared, and a far light's shadow covers few pixels. In the shaders a
+    /// far light's slot is `NVF_FAR_CUBE` + its slot (bits 16..23 of its flags hold that
+    /// + 1; `shadow_sampling.wesl` `nvf_point_far`). Empty, nothing changes.
+    pub far_slots: EntityHashMap<u32>,
+    pub far_capacity: u32,
+    pub far_size: u32,
+}
+
+/// NVForever ALCS far maps: a point light's cube number is its slot in the first cube
+/// texture, or this plus its slot in the far one ([`HoldLightShadowMaps::far_slots`]).
+pub const NVF_FAR_CUBE: usize = 128;
+
+/// NVForever ALCS far maps: whether a cube number is of the far texture.
+fn nvf_far(cube: usize) -> bool {
+    cube >= NVF_FAR_CUBE
+}
+
+/// NVForever ALCS far maps: a cube number's slot in its texture.
+fn nvf_slot(cube: usize) -> usize {
+    cube & (NVF_FAR_CUBE - 1)
 }
 
 /// NVForever static shadow cache: one layer copied between the cache texture and the
@@ -3998,11 +4136,13 @@ pub struct NvfStaticShadowFace {
 fn nvf_static_layer_attachment(
     layers: &mut HashMap<u32, DepthStencilViewAttachment>,
     texture: &Texture,
+    // NVForever ALCS far maps: kept by the cube number's layer, made of the texture's.
+    key: u32,
     layer: u32,
     clear: bool,
 ) -> DepthStencilViewAttachment {
     layers
-        .entry(layer)
+        .entry(key)
         .or_insert_with(|| {
             nvf_event(NVF_TEXTURE_VIEWS, 1);
             let view = texture.create_view(&TextureViewDescriptor {
@@ -4273,9 +4413,12 @@ fn nvf_shadow_view_cache_on() -> bool {
 /// across frames by `prepare_lights` while the texture is the same.
 #[derive(Default)]
 pub struct NvfShadowViewCache {
-    point_texture: Option<TextureId>,
+    /// The point texture and (NVForever ALCS far maps) the far one.
+    point_texture: Option<(TextureId, Option<TextureId>)>,
     directional_texture: Option<TextureId>,
     point_array: Option<TextureView>,
+    /// NVForever ALCS far maps: the far texture's cube array view.
+    far_array: Option<TextureView>,
     directional_array: Option<TextureView>,
     /// A point light face's attachment, by layer of the cube texture.
     point_layers: HashMap<u32, DepthStencilViewAttachment>,
@@ -4285,7 +4428,7 @@ pub struct NvfShadowViewCache {
     cascade_views: HashMap<u32, TextureView>,
     /// NVForever static shadow cache: the cache texture, its layers' attachments (clearing),
     /// and the sampled point texture's layers' loading attachments.
-    static_texture: Option<TextureId>,
+    static_texture: (Option<TextureId>, Option<TextureId>),
     static_layers: HashMap<u32, DepthStencilViewAttachment>,
     load_layers: HashMap<u32, DepthStencilViewAttachment>,
 }

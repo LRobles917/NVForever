@@ -319,6 +319,80 @@ fn nvf_point_shadow_cube(light_id: u32) -> i32 {
     return i32(select(light_id, slot - 1u, slot != 0u));
 }
 
+// NVForever ALCS far maps (light.rs `HoldLightShadowMaps::far_slots`, `NVF_FAR_CUBE`): a
+// light the game keeps in the far cube texture carries 128 + its slot there; its maps are
+// in `nvf_point_shadow_far_textures`, of another side.
+const NVF_FAR_CUBE: u32 = 128u;
+
+fn nvf_point_far(light_id: u32) -> bool {
+    let slot = (view_bindings::clustered_lights.data[light_id].flags >> 16u) & 0xffu;
+    return slot > NVF_FAR_CUBE;
+}
+
+// The side of the texture a light's cube is in, texels.
+@if(!NO_CUBE_ARRAY_TEXTURES_SUPPORT)
+fn nvf_point_side(far: bool) -> f32 {
+    if far {
+        return f32(textureDimensions(view_bindings::nvf_point_shadow_far_textures).x);
+    }
+    return f32(textureDimensions(view_bindings::point_shadow_textures).x);
+}
+
+// A far light's texels against the first texture's, each way: the lights' normal bias is
+// scaled by the first texture's texel (light.rs `extract_lights`).
+@if(!NO_CUBE_ARRAY_TEXTURES_SUPPORT)
+fn nvf_point_texel_scale(light_id: u32) -> f32 {
+    if nvf_point_far(light_id) {
+        return nvf_point_side(false) / nvf_point_side(true);
+    }
+    return 1.0;
+}
+@if(NO_CUBE_ARRAY_TEXTURES_SUPPORT)
+fn nvf_point_texel_scale(light_id: u32) -> f32 {
+    return 1.0;
+}
+
+// One compared read of a light's cube (hardware 2x2), and one plain read of its depth.
+@if(!NO_CUBE_ARRAY_TEXTURES_SUPPORT)
+fn nvf_point_compare(dir: vec3<f32>, far: bool, cube: i32, depth: f32) -> f32 {
+    if far {
+        return textureSampleCompareLevel(
+            view_bindings::nvf_point_shadow_far_textures,
+            view_bindings::point_shadow_textures_comparison_sampler,
+            dir,
+            cube,
+            depth,
+        );
+    }
+    return textureSampleCompareLevel(
+        view_bindings::point_shadow_textures,
+        view_bindings::point_shadow_textures_comparison_sampler,
+        dir,
+        cube,
+        depth,
+    );
+}
+
+@if(!NO_CUBE_ARRAY_TEXTURES_SUPPORT && PCSS_SAMPLERS_AVAILABLE)
+fn nvf_point_depth(dir: vec3<f32>, far: bool, cube: i32) -> f32 {
+    if far {
+        return textureSampleLevel(
+            view_bindings::nvf_point_shadow_far_textures,
+            view_bindings::point_shadow_textures_linear_sampler,
+            dir,
+            cube,
+            0u,
+        );
+    }
+    return textureSampleLevel(
+        view_bindings::point_shadow_textures,
+        view_bindings::point_shadow_textures_linear_sampler,
+        dir,
+        cube,
+        0u,
+    );
+}
+
 // NVForever held light shadow maps: the layer of the directional shadow texture a spot
 // light's map is in. A light given a slot carries its layer + 1 in bits 16..23 of its
 // flags; any other light's layer is its index plus the offset, as in Bevy.
@@ -705,8 +779,10 @@ fn nvf_sample_shadow_cubemap_soft(
     let dir = frag_ls / receiver;
     let basis = orthonormalize(dir);
     let plane = dot(normal, frag_ls);
-    let cube = nvf_point_shadow_cube(light_id);
-    let side = f32(textureDimensions(view_bindings::point_shadow_textures).x);
+    // NVForever ALCS far maps: the light's texture and its slot there.
+    let far = nvf_point_far(light_id);
+    let cube = nvf_point_shadow_cube(light_id) & i32(NVF_FAR_CUBE - 1u);
+    let side = nvf_point_side(far);
     // A texel's width as a tangent from the light (a face spans 2 over its side).
     let texel = 2.0 / side;
 
@@ -732,13 +808,7 @@ fn nvf_sample_shadow_cubemap_soft(
             off = vec2(cos(angle), sin(angle)) * r * search;
         }
         let tap = dir + basis[0] * off.x + basis[1] * off.y;
-        let sampled = textureSampleLevel(
-            view_bindings::point_shadow_textures,
-            view_bindings::point_shadow_textures_linear_sampler,
-            tap * flip,
-            cube,
-            0u,
-        );
+        let sampled = nvf_point_depth(tap * flip, far, cube);
         let a = abs(tap);
         // The blocker's distance from the light along this tap.
         let blocker = nvf_point_shadow_major(sampled, proj) * length(tap) / max(a.x, max(a.y, a.z));
@@ -765,13 +835,7 @@ fn nvf_sample_shadow_cubemap_soft(
         let a = abs(tap);
         let reference = nvf_own_surface(tap, normal, plane, receiver, texel, 1.5);
         let major = reference * max(a.x, max(a.y, a.z)) / length(tap);
-        lit += textureSampleCompareLevel(
-            view_bindings::point_shadow_textures,
-            view_bindings::point_shadow_textures_comparison_sampler,
-            tap * flip,
-            cube,
-            nvf_point_shadow_depth(major, proj),
-        );
+        lit += nvf_point_compare(tap * flip, far, cube, nvf_point_shadow_depth(major, proj));
     }
     return lit / f32(taps);
 

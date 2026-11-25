@@ -1053,6 +1053,39 @@ and is off by default and in both presets [design].
   blend off, a generic one (the tests `the_capture_refresh_compares_its_inputs`,
   `an_edit_after_a_blend_off_interval_still_remakes_the_capture`,
   `a_generic_edit_remakes_the_capture_even_with_equal_inputs`).
+- [design] **Heights from a ground pack's diffuse alpha** (#3486; asked for after jojokengly's
+  survey there). Ground packs for the original's terrain parallax shaders keep the height map
+  in the landscape diffuse's alpha, as DXT5 (Sandstone Desert: 64 of the 67 LTEX diffuses it
+  replaces; Tale of Two Landscapes 70 of 72 [observed: jojokengly, #3486]), with the specular mask left
+  in the `_n`'s alpha. This is a reader of packs that exist, no part of NVForever's own format:
+  nothing here is promised to pack authors, and it can be taken out without touching the
+  authored path. The rules:
+  - *An authored set always wins.* Where the index knows an active set for the diffuse
+    (authored or height-only; an incomplete one is no set here as elsewhere), the set alone
+    decides (its `_p`, or none), and the alpha is not looked at.
+  - *One height source.* The alpha becomes a BC4 texture at load, its blocks copied without
+    decoding (a DXT5 block's alpha half is laid out as a BC4 block [documented: Microsoft,
+    "Texture Block Compression in Direct3D 11"]), mips included, and goes into the layer's
+    height slot. The shader, the march, the weights and the edges are those above; only the
+    depth differs: 0.03 for every pack (`ALPHA_HEIGHT_DEPTH`; no scalar file sets it).
+  - *Which textures.* A folded layer's diffuse that is DXT5 with sides in multiples of 4 and
+    whose alpha varies by at least 16 of 255 on its largest level of at most 256 texels a side.
+    The diffuses FalloutNV.esm's LTEX records name are opaque DXT1 in the base game's archives
+    [observed: jojokengly, #3486; world.md §3], so nothing is read from them. Other layouts with alpha
+    (DXT3, BC7, uncompressed) are left out and stay flat, one log line for the first. An alpha
+    that means something else would be read wrongly [hypothesis: none seen].
+  - *Only while Terrain parallax is on* (and the run's Authored materials state is): the
+    textures are made when the switch is on, so a player who leaves it off pays nothing. Switched
+    on in a game, the loaded materials take theirs over some frames
+    (`terrain::sync_alpha_heights`: each file is read on the main thread, a few a frame);
+    switched off, they let go at once and the images leave graphics memory with the texture
+    cache's usual grace (five minutes, sooner when memory runs short). On, each such layer
+    costs half a byte a texel of graphics memory and a third more for the mips (a 2048 square
+    one 2.7 MiB), and its file is read once more (not when it was read ahead).
+  - *Not read:* a loose `textures\landscape\<name>_p.dds` beside the diffuse (most belong to
+    rock and rubble meshes [observed: jojokengly, #3486]).
+  - *Log:* `terrain: first folded material with heights from diffuse alphas: n of m layers`,
+    the count of materials and textures at each doubling, and at each switch how many of both. Smoke: `terrain-alpha-height`.
 - [design] **Checking it without a pack.** (`NVF_PLAY_TEST_PBR_GROUND_PACK=alpha` adds a flat
   diffuse with a checkerboard alpha for each texture, for #3789: world.md §3.) No data set has
   ground height maps, so two test

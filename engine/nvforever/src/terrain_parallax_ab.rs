@@ -23,7 +23,9 @@
 //! reaches it over the landscape, from a stand on the physics' landscape inside the same
 //! loaded cells. None found: a `FAIL` line and the sequence is skipped.
 //!
-//! **What is under the centre**, logged for every sequence before shot A: the physics ray
+//! **What is under the centre**, logged for every sequence before shot A (and again before shot
+//! B, the switch on, when the first found nothing to move: heights from diffuse alphas are held
+//! only while it is on): the physics ray
 //! along the view meets the landscape of a cell or a placed object; for the landscape the
 //! ground cover there (terrain.rs `ground_cover`, an estimate: the meshes' interpolation of
 //! the painted opacities). Where the march would move
@@ -732,7 +734,10 @@ fn tick(
     if waited < settle || (busy > 0 && waited < CAP_SECS) {
         return;
     }
-    if run.shifted.is_none() {
+    // Told once, before shot A; again with the switch on when nothing there was to be moved
+    // with it off: heights from diffuse alphas are held only while it is on (terrain.rs).
+    let bare = |s: Option<f32>| s.unwrap_or(0.0) < BARE_SHARE;
+    if run.shifted.is_none() || (run.phase == 1 && !run.spec.hold && run.shifted.is_some_and(bare)) {
         run.shifted = Some(under_centre(at, &land, phys.as_deref_mut(), player.as_deref()));
     }
     run.unsettled |= busy > 0;

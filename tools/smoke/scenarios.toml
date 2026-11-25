@@ -36505,6 +36505,37 @@ forbid = [
 manual = "Open terrain-layer-alpha-separate-anti-tiling-shots/terrain_parallax_ab_12s_a.png: no checkerboard on the ground."
 
 [[scenario]]
+name = "terrain-alpha-height"
+source = "[design, #3486] engine/nvforever/src/terrain.rs \"Heights from a diffuse's alpha\", docs/spec-notes/pbr-materials.md \"Heights from a ground pack's diffuse alpha\": over generated DXT5 diffuses with a height map in the alpha and no authored sets (the test aid NVF_PLAY_TEST_PBR_GROUND_PACK=alpha-height) Terrain parallax takes the layers' heights from the alphas and the ground at the aid's spot changes with the switch, as with authored heights; switched off the heights are let go and the picture is the first one again"
+areas = ["renderer", "graphics", "terrain", "textures"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_parallax_ab.rs",
+  "engine/nvf-assets/src/texture.rs", "engine/nvf-assets/src/pbr_field/ground.rs", "engine/nvf-assets/src/pbr_field/ground/",
+]
+env = { NVF_PLAY_TEST_PBR_GROUND_PACK = "alpha-height", NVFOREVER_HOME = "terrain-alpha-height-home", NVF_PLAY_TEST_SHOT_DIR = "terrain-alpha-height-shots", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TERRAIN_PARALLAX_AB = "9:grazing" }
+args = ["--pos=-72000,2152,8390", "--heading", "90", "--play", "--no-voice", "--no-messages", "--no-grass", "--hour", "12", "--size", "1280x720", "--graphics-only", "authored-materials,terrain-parallax,no-eye-adaptation"]
+run_seconds = 40
+timeout = 180
+expect = [
+  { re = 'pbr ground pack: no sets; a diffuse for each landscape texture with the height map in its alpha', count = 1, label = "the generated alpha-height diffuses are in" },
+  { re = 'terrain: first folded material with heights from diffuse alphas: [1-6] of [1-6] layers \(depth 0\.03\)', count = 1, label = "the folded layers took the alphas" },
+  { re = 'terrain parallax ab at 9 s: under the centre: the landscape at .* shifted share (0\.[5-9]\d|1\.00)', label = "with the switch on the view's centre is on ground the march moves (alpha heights)" },
+  { re = 'terrain parallax ab at 9 s \(flip\): .*; changed$', count = 1, label = "the switch changes the ground over alpha heights and off again is as before" },
+]
+order = [[
+  { re = 'terrain: heights from diffuse alphas off: [1-9]\d* folded quadrant materials changed', label = "switched off, the materials let go of the alpha heights" },
+  { re = 'terrain: heights from diffuse alphas on: [1-9]\d* folded quadrant materials changed, [1-9]\d* textures', label = "switched on again, they ask for them" },
+]]
+forbid = [
+  { text = "terrain: first folded material with authored height maps", label = "there is no authored set in this run" },
+  { re = 'terrain parallax ab.*FAIL', label = "no spot found, or a shot that could not be measured (terrain-alpha-height)" },
+  { text = "pbr ground pack: FAIL", label = "the ground pack was not written (terrain-alpha-height)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the alpha heights" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (terrain-alpha-height)" },
+]
+manual = "Open terrain-alpha-height-shots/terrain_parallax_ab_9s_a.png and _b.png: the ridge grid in relief in b only."
+
+[[scenario]]
 name = "volumetric-light"
 source = "[design, #3032 stage 3] docs/design/volumetric-medium.md (The near grid and the light in the air), engine/nvforever/src/medium_air*.rs, medium_air_grid.wesl, medium_air_filter.wesl and medium_air_compose.wesl, and the narrow edits in graphics.rs (the view kept HDR), terrain_shadows.rs (the map's producer demand) and sun_visibility.rs (the outdoor sun's marker): with the Volumetric light row at Goodsprings at 17:30 under NVWastelandClear, 4x MSAA, sun shadows and the Terrain shadows and Cloud shadows rows on, the light is wanted, its gate opens, the volume is made with the filter's second volume, the grid, filter and composite pipelines compile, the terrain map and the cloud shadow are in use, and the grid pass and the composite (multisampled depth) draw, without a 'not drawn' reason or a shader, pipeline or rendering error. The look and the cost are checked in pictures and GPU spans by hand"
 areas = ["renderer", "graphics", "weather"]

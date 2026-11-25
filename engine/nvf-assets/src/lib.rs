@@ -39,6 +39,6 @@ pub use release::{AssetReleasePlugin, KeepLimits};
 pub use pbr_field::reflect::{mount_pack_requested, seed_mount_pack, MOUNT_PACK_ENV};
 /// The terrain parallax's ground-pack test aid (pbr_field/ground.rs).
 pub use pbr_field::ground::{ground_pack_requested, seed_ground_pack, GroundPack, GROUND_DEPTH, GROUND_PACK_ENV};
-pub use texture::TextureCache;
+pub use texture::{TextureCache, ALPHA_HEIGHT_DEPTH};
 
 pub mod nif_surface_blend;

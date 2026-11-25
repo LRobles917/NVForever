@@ -98,6 +98,35 @@ fn the_terrain_lookup_takes_the_generated_height_map_at_the_set_depth() {
     let _ = fs::remove_dir_all(&home);
 }
 
+/// #3486: a diffuse's alpha is a height only where the authored index knows no set for it.
+#[test]
+fn a_diffuse_alpha_is_a_height_only_without_an_authored_set() {
+    let home = temp_home("alpha-height");
+    let data_dir = home.join("Data");
+    let land = data_dir.join("textures").join("landscape");
+    fs::create_dir_all(&land).unwrap();
+    for name in ["dirt01.dds", "sand01.dds"] {
+        fs::write(land.join(name), ground_diffuse_dds(0)).unwrap();
+    }
+    // A set for dirt01 only: without a `_p`, a colour set that gives no height.
+    let pbr = data_dir.join("textures").join("pbr").join("landscape");
+    fs::create_dir_all(&pbr).unwrap();
+    fs::write(pbr.join("dirt01_orm.dds"), ground_diffuse_dds(1)).unwrap();
+    let data = GameData::new(Arc::new(fnv_vfs::Vfs::open(&data_dir, &[]).unwrap()), Arc::new(fnv_nif::Schema::default()));
+    let mut cache = TextureCache::default();
+    let mut images = Assets::<Image>::default();
+    assert!(cache.alpha_height_with(true, "Landscape\\Dirt01.dds", &data, &mut images, None).is_none(), "the set decides: no _p, no height");
+    assert!(cache.alpha_height_with(false, "landscape\\sand01.dds", &data, &mut images, None).is_none(), "the setting off");
+    let (height, depth) = cache.alpha_height_with(true, "landscape\\sand01.dds", &data, &mut images, None).expect("a varying alpha and no set");
+    assert_eq!(depth, crate::texture::ALPHA_HEIGHT_DEPTH);
+    let image = images.get(&height).unwrap();
+    assert_eq!((image.texture_descriptor.format, image.texture_descriptor.mip_level_count), (TextureFormat::Bc4RUnorm, GROUND_SIDE.ilog2() + 1));
+    assert_eq!(cache.alpha_height_with(true, "Landscape\\Sand01.dds", &data, &mut images, None).unwrap().0, height, "made once");
+    assert!(cache.failures.is_empty() && cache.alpha_height_with(true, "landscape\\none.dds", &data, &mut images, None).is_none());
+    assert!(cache.failures.is_empty(), "nothing to report: the diffuse's own load does");
+    let _ = fs::remove_dir_all(&home);
+}
+
 /// The pack writes only into a fresh folder of its own: a second run gets another one, files
 /// already in the home are never touched, and nothing is written without a texture or a home.
 #[test]
@@ -196,8 +225,19 @@ fn the_alpha_pack_replaces_every_diffuse_with_a_flat_colour_and_a_checkerboard_a
     let (_, sets, files) = seed_ground_pack_in(&home, 11, 1, GroundPack::Alpha, &diffuses).unwrap();
     assert_eq!((sets, files), (2, 8));
     let _ = fs::remove_dir_all(&home);
+    // The alpha-height pack (#3486): the diffuses and normal maps alone, the height map in
+    // the diffuse's alpha, the colour in two shades.
+    let files = ground_fixture(GroundPack::AlphaHeight, &diffuses);
+    assert_eq!(files.iter().map(|f| f.0.as_str()).collect::<Vec<_>>(), ["textures/landscape/dirt01.dds", "textures/landscape/dirt01_n.dds", "textures/landscape/rocks02.dds", "textures/landscape/rocks02_n.dds"]);
+    let dds = fnv_dds::Dds::parse(&files[0].1).unwrap();
+    let top = fnv_dds::decode_blocks(dds.format, GROUND_SIDE, GROUND_SIDE, dds.levels[0][0]).unwrap();
+    let px = top.as_chunks::<4>().0;
+    assert_eq!((px[0][3], px[30 * GROUND_SIDE as usize + 30][3]), (255, 0), "a ridge and the ground between");
+    let shades: std::collections::HashSet<[u8; 3]> = px.iter().map(|p| [p[0], p[1], p[2]]).collect();
+    assert_eq!(shades.len(), 2);
     let named = |v: &str| ground_pack_named(std::ffi::OsStr::new(v));
-    assert_eq!((named("1"), named("alpha"), named("0"), named("")), (Some(GroundPack::Heights), Some(GroundPack::Alpha), None, None));
+    assert_eq!((named("1"), named("alpha"), named("alpha-height")), (Some(GroundPack::Heights), Some(GroundPack::Alpha), Some(GroundPack::AlphaHeight)));
+    assert_eq!((named("0"), named("")), (None, None));
 }
 
 /// Every file under `dir`.

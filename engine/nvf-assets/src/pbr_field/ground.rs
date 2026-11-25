@@ -37,6 +37,12 @@
 //! is of one colour; a renderer that blends by it shows the board in the colours of what lies
 //! under the layer. The height sets come with it, so the readback aid finds its spot.
 //!
+//! With `NVF_PLAY_TEST_PBR_GROUND_PACK=alpha-height` (#3486) there are no sets: every diffuse is
+//! replaced by a DXT5 in two shades of its colour, a shade a 4x4 block from a hash, whose
+//! alpha is the height map above ([`ground_height`]), with the flat `_n` beside it: a ground
+//! pack in the convention whose alpha is a height (nvforever terrain.rs "Heights from a
+//! diffuse's alpha").
+//!
 //! [engineering policy] A test aid: it makes the run unattended, writes no game folder and no
 //! mods folder, and nothing it writes is a fact about the original game.
 
@@ -46,7 +52,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{create_file, new_output_in};
 
-/// The test aid's switch (`=1`, or `=alpha` for [`GroundPack::Alpha`]).
+/// The test aid's switch (`=1`, `=alpha` or `=alpha-height`: [`GroundPack`]).
 pub const GROUND_PACK_ENV: &str = "NVF_PLAY_TEST_PBR_GROUND_PACK";
 
 /// The generated `_p`'s side, in texels.
@@ -69,9 +75,11 @@ pub enum GroundPack {
     Heights,
     /// The height-only set and a diffuse of one flat colour with a checkerboard alpha (#3789).
     Alpha,
+    /// No set: a diffuse in two shades whose alpha is the height map (#3486).
+    AlphaHeight,
 }
 
-/// The ground pack [`GROUND_PACK_ENV`] asks for (`=1`, `=alpha`), if any.
+/// The ground pack [`GROUND_PACK_ENV`] asks for, if any.
 pub fn ground_pack_requested() -> Option<GroundPack> {
     ground_pack_named(&std::env::var_os(GROUND_PACK_ENV)?)
 }
@@ -80,6 +88,7 @@ fn ground_pack_named(value: &std::ffi::OsStr) -> Option<GroundPack> {
     match value.to_str()? {
         "1" => Some(GroundPack::Heights),
         "alpha" => Some(GroundPack::Alpha),
+        "alpha-height" => Some(GroundPack::AlphaHeight),
         _ => None,
     }
 }
@@ -176,20 +185,32 @@ fn ground_colour(i: usize) -> u16 {
 /// Microsoft "Texture Block Compression in Direct3D 11"]: the alpha's endpoints both the
 /// block's value, the colour's both the texture's colour, every index 0.
 pub fn ground_diffuse_dds(i: usize) -> Vec<u8> {
-    dxt5(ground_alpha, ground_colour(i))
+    dxt5(ground_alpha, |_, _| ground_colour(i))
+}
+
+/// The `i`th texture's diffuse with a height in its alpha ([`GroundPack::AlphaHeight`]).
+pub fn ground_alpha_height_dds(i: usize) -> Vec<u8> {
+    let c = ground_colour(i);
+    // Half of each channel.
+    let dark = (c >> 1) & 0x7bef;
+    dxt5(ground_height, |bx, by| if (bx.wrapping_mul(0x9e37_79b1) ^ by.wrapping_mul(0x85eb_ca77)).wrapping_mul(0xc2b2_ae3d) >> 31 == 0 { c } else { dark })
 }
 
 /// The generated normal map: straight up (RGB565 16, 32, 31), alpha 0 (no specular mask).
 pub fn ground_normal_dds() -> Vec<u8> {
-    dxt5(|_, _| 0, 16 << 11 | 32 << 5 | 31)
+    dxt5(|_, _| 0, |_, _| 16 << 11 | 32 << 5 | 31)
 }
 
-fn dxt5(alpha: fn(u32, u32) -> u8, colour: u16) -> Vec<u8> {
+/// A DXT5 of the alphas `alpha` (as [`levels`] takes them) and the colours `colour`, by the
+/// top level's block (a smaller level's block takes its first one's).
+fn dxt5(alpha: fn(u32, u32) -> u8, colour: impl Fn(u32, u32) -> u16) -> Vec<u8> {
     let levels = levels(alpha);
     let mut b = header(b"DXT5", 16, levels.len());
-    let [lo, hi] = colour.to_le_bytes();
-    for (_, values) in &levels {
-        for &v in values {
+    for (side, values) in &levels {
+        let blocks = side.div_ceil(4);
+        let cover = (GROUND_SIDE / 4 / blocks).max(1);
+        for (k, &v) in (0u32..).zip(values) {
+            let [lo, hi] = colour(k % blocks * cover, k / blocks * cover).to_le_bytes();
             b.extend_from_slice(&[v, v, 0, 0, 0, 0, 0, 0, lo, hi, lo, hi, 0, 0, 0, 0]);
         }
     }
@@ -237,13 +258,14 @@ pub fn ground_fixture<S: AsRef<str>>(pack: GroundPack, diffuses: &[S]) -> Vec<(S
         .into_iter()
         .enumerate()
         .flat_map(|(i, stem)| {
-            let mut files = vec![
-                (rel(fnv_pbr::member_path(&stem, fnv_pbr::Member::Height)), height.clone()),
-                (rel(fnv_pbr::member_path(&stem, fnv_pbr::Member::Scalars)), scalars.clone()),
-            ];
-            if pack == GroundPack::Alpha {
+            let mut files = Vec::new();
+            if pack != GroundPack::AlphaHeight {
+                files.push((rel(fnv_pbr::member_path(&stem, fnv_pbr::Member::Height)), height.clone()));
+                files.push((rel(fnv_pbr::member_path(&stem, fnv_pbr::Member::Scalars)), scalars.clone()));
+            }
+            if pack != GroundPack::Heights {
                 if let Some(d) = fnv_pbr::diffuse_stem(&stem) {
-                    files.push((rel(format!("{d}.dds")), ground_diffuse_dds(i)));
+                    files.push((rel(format!("{d}.dds")), if pack == GroundPack::Alpha { ground_diffuse_dds(i) } else { ground_alpha_height_dds(i) }));
                     files.push((rel(format!("{d}_n.dds")), ground_normal_dds()));
                 }
             }

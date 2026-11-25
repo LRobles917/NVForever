@@ -1504,8 +1504,10 @@ fn run_with_args(line: Vec<String>) -> AppExit {
         match terrain::ground_pack_diffuses(&opened.plugins, &args.esm_schema).and_then(|d| nvf_assets::seed_ground_pack(kind, &d)) {
             Ok((dir, sets, files)) => {
                 eprintln!("pbr ground pack: {sets} height-only sets for the landscape textures ({files} generated files, depth {}) written under {} (this run's own folder, mounted over every other loose layer)", nvf_assets::GROUND_DEPTH, dir.display());
-                if kind == nvf_assets::GroundPack::Alpha {
-                    eprintln!("pbr ground pack: and a diffuse for each, one flat colour with a checkerboard alpha, and a flat normal map");
+                match kind {
+                    nvf_assets::GroundPack::Heights => {}
+                    nvf_assets::GroundPack::Alpha => eprintln!("pbr ground pack: and a diffuse for each, one flat colour with a checkerboard alpha, and a flat normal map"),
+                    nvf_assets::GroundPack::AlphaHeight => eprintln!("pbr ground pack: no sets; a diffuse for each landscape texture with the height map in its alpha, and a flat normal map"),
                 }
                 Some(dir)
             }

@@ -900,10 +900,13 @@ impl MaterialExtension for NifSurface {
         let metallic_def: &[&str] = if crate::authored::metallic_debug() && !reflect { &["NVF_PBR_METALLIC"] } else { &[] };
         let mask_def: &[&str] = if crate::authored::parallax_mask() { &[PARALLAX_MASK_DEF] } else { &[] };
         let reflect_def: &[&str] = if reflect { &[crate::reflection_cube::REFLECT_DEF] } else { &[] };
+        // Physical lighting (graphics-enhanced.md §3.25): the shade-light mix, the hot light,
+        // the ambient highlight and the environment map's weight take their physical forms.
+        let physical_def: &[&str] = if crate::authored::physical_pbr() { &["NVF_PHYSICAL_PBR"] } else { &[] };
         let view_defs = crate::authored::view().shader_defs();
-        if !(view_defs.is_empty() && metallic_def.is_empty() && mask_def.is_empty() && reflect_def.is_empty()) && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
+        if !(view_defs.is_empty() && metallic_def.is_empty() && mask_def.is_empty() && reflect_def.is_empty() && physical_def.is_empty()) && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
             if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.shader_defs.extend(view_defs.iter().chain(metallic_def).chain(mask_def).chain(reflect_def).map(|d| ShaderDefVal::from(*d)));
+                fragment.shader_defs.extend(view_defs.iter().chain(metallic_def).chain(mask_def).chain(reflect_def).chain(physical_def).map(|d| ShaderDefVal::from(*d)));
             }
         }
         // StandardMaterial has set the rasteriser's bias from the material's depth bias.

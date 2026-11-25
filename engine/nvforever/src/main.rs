@@ -139,6 +139,7 @@ mod light_shadow_casters;
 mod light_shadow_detail;
 mod light_shadows;
 mod lights;
+mod physical_ibl;
 mod limbs;
 mod lips;
 mod memory_budget;
@@ -2032,6 +2033,9 @@ fn run_with_args(line: Vec<String>) -> AppExit {
     // Its solid cores of blended shapes (only while the light is drawn).
     .add_plugins(solid_cores::SolidCoresPlugin)
     // The sun visibility factor: cloud and terrain shadows on the sun (off until a producer sets it).
+    // Physical lighting's image-based light from the sky (graphics-enhanced.md §3.25); idle
+    // without the row.
+    .add_plugins(physical_ibl::PhysicalIblPlugin)
     .add_plugins(sun_visibility::SunVisibilityPlugin)
     // The ambient occlusion's shader for the lighting (imported only under its def).
     .add_plugins(ssao_lighting::SsaoLightingPlugin)

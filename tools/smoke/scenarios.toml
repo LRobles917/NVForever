@@ -37008,3 +37008,40 @@ expect = [
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error in the clustering passes" },
 ]
+[[scenario]]
+name = "physical-lighting"
+source = "[design, #3827 part 5] docs/design/graphics-enhanced.md §3.25 (engine/nvforever/src/lights.rs `physical_patched`, physical_ibl.rs, fog/shader.rs, eye_adapt.rs): with --graphics-only physical-pbr at Goodsprings at noon, the run's switch is on, the physical light loop is installed and the sky's image-based light is made, without a pipeline or rendering error. Whether the look is right is checked in pictures by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/physical_ibl.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/nvforever/src/fog.rs", "engine/nvforever/src/fog/shader.rs", "engine/nvforever/src/eye_adapt.rs"]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "physical-pbr"]
+run_seconds = 20
+expect = [
+  { text = "physical PBR: on", count = 1, label = "the run's switch is on" },
+  { text = "lights: physical PBR linear lighting installed", label = "the physical light loop is in place" },
+  { re = 'graphics: .*physical PBR lighting', label = "the graphics line names it" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (a physical patch that does not compile)" },
+  { text = "not as expected (Bevy changed?)", label = "a physical patch's anchors missing" },
+  { text = "DeviceLost", label = "the GPU device was lost" },
+]
+note = "Written 2026-11-25 without a run (the split of #3828; smoke runs to follow)."
+[[scenario]]
+name = "physical-lighting-no-volumetric"
+source = "[design, the user's decision 2026-11-25] docs/design/graphics-enhanced.md §3.25 (engine/nvforever/src/graphics.rs `volumetric_clouds_run`, `volumetric_light_run`): started with --graphics-only physical-pbr,volumetric-clouds-high,volumetric-light at Goodsprings at 17:30, the volumetric rows do not run under Physical lighting: the graphics line names neither, and the light in the air is never wanted"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/graphics.rs", "engine/nvforever/src/volumetric_clouds.rs", "engine/nvforever/src/medium_air_demand.rs", "crates/nvf-settings-layout/src/lib.rs"]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "17.5", "--graphics-only", "physical-pbr,volumetric-clouds-high,volumetric-light"]
+run_seconds = 20
+expect = [
+  { text = "physical PBR: on", count = 1, label = "the run's switch is on" },
+  { re = 'graphics: .*physical PBR lighting', label = "the graphics line names Physical lighting" },
+]
+forbid = [
+  { re = 'graphics: .*volumetric clouds', label = "the clouds are on under Physical lighting" },
+  { re = 'graphics: .*volumetric light', label = "the light in the air is on under Physical lighting" },
+  { text = "volumetric medium: light in the air wanted", label = "the light in the air was wanted" },
+  { text = "Caught rendering error", label = "a rendering (validation) error" },
+]
+note = "Written 2026-11-25 without a run (the split of #3828; smoke runs to follow)."

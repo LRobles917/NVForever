@@ -4280,7 +4280,7 @@ and names its functions `vc_m2_*`); a run draws with it and nothing else.
 
 ### 3.25 Physical lighting (`physical-pbr`; off in every preset, #3827)
 
-**In progress** (the split of #3828, part 5): the row and the run's switch are in; the lighting below is being carried over from #3828's branch and made to work with the volumetric clouds, their shadows and the light in the air (§3.23, docs/design/volumetric-medium.md), with them on and off. Until then this section describes #3828's branch.
+**Carried over** from #3828's branch (its split, part 5): the light loop, lamps, fog, the sky and its image-based light, exposure, bloom and the materials below. Still #3828's branch's alone: the ambient occlusion inside the physical light loop (part 2, #4287; until then the occlusion stays on the picture under this row), the canopy shading (3b), the subsurface scattering (6) and the window rays' room light (7). Not measured or pictured yet.
 
 **Not with the volumetric rows yet** [design: the user's decision 2026-11-25, until they and
 spooknik agree how the two work together]: under Physical lighting, Volumetric clouds and

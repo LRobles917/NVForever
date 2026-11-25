@@ -1431,5 +1431,27 @@ pub(crate) fn srgb_warning(memo: &Memo, path: &str, usage: TextureUsage, srgb_co
     }
 }
 
+
+/// The run's Physical PBR lighting state (the settings row `physical-pbr`, nvforever
+/// graphics.rs; docs/design/graphics-enhanced.md §3.25), fixed before the first shader hook
+/// and material: off unless the start set it ([`set_physical_pbr`]).
+static PHYSICAL_PBR: OnceLock<bool> = OnceLock::new();
+
+/// Fix the run's Physical PBR state before the first shader hook and material are made. A
+/// later call with another value is logged and ignored: the row takes effect at the next
+/// start.
+pub fn set_physical_pbr(on: bool) {
+    if PHYSICAL_PBR.set(on).is_err() && physical_pbr() != on {
+        warn!("physical PBR: already {} for this run; the setting takes effect at the next start", if physical_pbr() { "on" } else { "off" });
+    }
+}
+
+/// Whether this run lights the world physically (Oren-Nayar diffuse and Cook-Torrance GGX
+/// specular with Schlick Fresnel, image-based light from the sky, linear fog and exposure)
+/// in place of the display-value lighting sum. Off unless [`set_physical_pbr`] said so.
+pub fn physical_pbr() -> bool {
+    *PHYSICAL_PBR.get_or_init(|| false)
+}
+
 #[cfg(test)]
 pub(crate) mod tests;

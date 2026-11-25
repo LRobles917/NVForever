@@ -1207,7 +1207,7 @@ fn register_graphics(app: &mut App) {
         Setting { key: CLOUDS_KEY, group: GROUP_GRAPHICS, label: "Volumetric clouds (experimental)", note: CLOUDS_NOTE, switches: "--graphics-only", get: |_| false, set: |_, _| {}, slider: None },
         ChoiceList { names: |_| CLOUD_CHOICES.iter().map(|c| (*c).to_string()).collect(), chosen: clouds_chosen, pick: take_clouds, save: clouds_chosen, load: take_clouds, ask_keep: false },
     );
-    let switches: [Switch; 25] = [
+    let switches: [Switch; 26] = [
         (
             "fine-shadows",
             "Longer sun shadows",
@@ -1379,6 +1379,14 @@ fn register_graphics(app: &mut App) {
             |w, on| w.resource_mut::<Graphics>().night_sky_detail = on,
         ),
         (
+            "physical-pbr",
+            "Physical lighting (experimental)",
+            PHYSICAL_PBR_NOTE,
+            "--graphics-only",
+            |w| w.resource::<Graphics>().physical_pbr,
+            |w, on| w.resource_mut::<Graphics>().physical_pbr = on,
+        ),
+        (
             "distant-lights",
             "Distant lights (experimental)",
             "On: at night, lamps in the places beyond the loaded area show as small glows, so towns can be seen from afar. They light nothing. Not in the original.",
@@ -1522,6 +1530,22 @@ pub(crate) fn authored_after_ini(command_line: bool, given: Option<&nvf_play::se
     let Some(given) = given else { return command_line };
     let stored = stored_at_start(crate::graphics::AUTHORED_MATERIALS_KEY).and_then(|v| nvf_play::settings::parse_switch(&v));
     nvf_play::settings::switch_after_ini(command_line, stored, given, AUTHORED_MATERIALS_SWITCHES)
+}
+
+/// The Physical lighting row's note (graphics-enhanced.md §3.25).
+const PHYSICAL_PBR_NOTE: &str = "On: light, sky, fog and exposure follow physical rules instead of the original's display values. Still being tuned. Takes effect at the next start. Not in the original.";
+
+/// The run's Physical PBR lighting state, decided before the first shader hook and material
+/// by [`authored_after_ini`]'s rule: the command line's (`--graphics-only physical-pbr`),
+/// then the INI's stored row. In a build with the developer aids (dev_aids.rs),
+/// `NVF_PHYSICAL_PBR=1` or `0` overrides both, for comparing.
+pub(crate) fn physical_pbr_after_ini(command_line: bool, given: Option<&nvf_play::settings::GivenSwitches>) -> bool {
+    if let Some(v) = crate::dev_aids::var("NVF_PHYSICAL_PBR") {
+        return v.trim() == "1";
+    }
+    let Some(given) = given else { return command_line };
+    let stored = stored_at_start("physical-pbr").and_then(|v| nvf_play::settings::parse_switch(&v));
+    nvf_play::settings::switch_after_ini(command_line, stored, given, "--graphics-only")
 }
 
 /// The Reflections on authored materials row's note (#2981 reflections): it needs a pack and
@@ -3229,6 +3253,7 @@ dlss-model=Preset K
             ("volumetric-clouds", &["--graphics-only"]),
             ("aerial-perspective", &["--graphics", "--graphics-only"]),
             ("night-sky-detail", &["--graphics", "--graphics-only"]),
+            ("physical-pbr", &["--graphics-only"]),
             ("distant-lights", &["--graphics", "--graphics-only"]),
             (VOLUMETRIC_LIGHT_KEY, &["--graphics-only"]),
             (VOLUMETRIC_LIGHT_STRENGTH_KEY, &[]),

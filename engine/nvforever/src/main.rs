@@ -1899,6 +1899,11 @@ fn run_with_args(line: Vec<String>) -> AppExit {
     // never mix the two; the page's row changes the next start's.
     let authored = settings::authored_after_ini(graphics.authored_materials, play.is_some().then(|| settings::given_switches(&args, &command_line())).as_ref());
     nvf_assets::authored::set_enabled(authored);
+    // Physical PBR lighting (graphics-enhanced.md §3.25): the run's state by the same rule,
+    // fixed before the first shader hook and material; the page's row changes the next start's.
+    let physical_pbr = settings::physical_pbr_after_ini(graphics.physical_pbr, play.is_some().then(|| settings::given_switches(&args, &command_line())).as_ref());
+    nvf_assets::authored::set_physical_pbr(physical_pbr);
+    app.add_systems(Startup, move || info!("physical PBR: {}", if physical_pbr { "on" } else { "off" }));
     app.add_systems(Startup, move || info!("authored materials: {}", if authored { "on (sets under textures\\pbr\\ are used where a pack has them)" } else { "off (setting)" }));
     // Reflections on authored materials (#2981): the run's state by the same rule, fixed
     // before the first NIF pipeline (the opt-in def and the metallic factor); the world

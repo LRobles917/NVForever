@@ -4258,6 +4258,55 @@ and names its functions `vc_m2_*`); a run draws with it and nothing else.
   composition samples every layer once and runs the transmission product twice, up to about 10 MiB of
   working memory at eight layers on the compute pool; folding both into one pass is not done.
 
+### 3.25 Physical lighting (`physical-pbr`; off in every preset, #3827)
+
+**In progress** (the split of #3828, part 5): the row and the run's switch are in; the lighting below is being carried over from #3828's branch and made to work with the volumetric clouds, their shadows and the light in the air (§3.23, docs/design/volumetric-medium.md), with them on and off. Until then this section describes #3828's branch.
+
+[design, #3827] An addition of NVForever's own for the enhanced look: not a fact about the
+original game, never a parity item, and never to be used to explain a difference from the
+original's frames. Off in both presets; with every row below off, the picture is the
+display-value lighting of world.md §8 unchanged. Every value in the tables is an
+engineering choice tuned by eye on this machine (`[design]`) unless the row says otherwise.
+
+**Physical PBR lighting** (`physical-pbr`, Graphics > Lighting and Effects; read once at
+the start, so a change applies at the next start; in a build with the developer aids,
+`NVF_PHYSICAL_PBR=1` / `0` overrides the row, settings.rs `physical_pbr_after_ini`).
+The display-value lighting sum (world.md §8) is replaced by linear lighting:
+
+- *Diffuse*: the energy-preserving Oren-Nayar model (EON) [documented: Portsmouth, Kutz
+  and Hill, "EON: A practical energy-preserving rough diffuse BRDF", JCGT 2025; the
+  OpenPBR surface specification's diffuse]. *Specular*: Cook-Torrance with the GGX
+  distribution [documented: Walter et al. 2007, "Microfacet Models for Refraction through
+  Rough Surfaces"] and Bevy's Schlick Fresnel; the perceptual roughness floor is 0.045,
+  Filament's desktop figure, in place of Bevy's mobile 0.089 [documented: Filament's
+  material documentation]. In the display-value mode the highlight keeps F = F0 in world
+  views (#2266, `lights.rs` `FRESNEL_EDIT`); physical PBR takes Bevy's Fresnel on
+  purpose. Code: `lights/display_shader.rs` (`lighting_patched`, `oren_nayar_patched`).
+- *Lamps*: inverse-square falloff with a finite bulb core and a smooth window at the
+  light's radius, `w² · 0.22 / (u + 0.09)` with `u = (d / R)²` and
+  `w = 1 − u²` [design: the inverse-square law with a core and window after Karis 2013,
+  "Real Shading in Unreal Engine 4"; the 0.22 and 0.09 put a lamp's light at about 0.35 R
+  where the display-value falloff had it in the rooms checked]. Light colours are decoded
+  from sRGB to linear light (`PHYSICAL_SPECULAR_EDITS`).
+- *Sky and ambient*: Bevy's flat ambient is replaced in world views by an image-based
+  light from cube maps built each time the sky changes (`physical_ibl.rs`): outdoors the
+  sky dome's zenith, middle and horizon colours, a sunlit ground below and the sun's disc
+  and aureole for the specular; indoors the cell's ambient as ceiling and floor and its
+  directional colour as a lobe.
+- *Sky*: a single-scattering atmosphere (Rayleigh, Mie and ozone) for the sky's colour and
+  the sun's light (`sky.rs`, `sky.wesl`) [documented: Bruneton and Neyret 2008, "Precomputed
+  Atmospheric Scattering"; Hillaire 2020, "A Scalable and Production Ready Sky and
+  Atmosphere Rendering Technique", for the model and the Earth and atmosphere radii].
+- *Fog*: optical depth linear in distance (Beer-Lambert), Rayleigh and Mie in-scatter with
+  a Henyey-Greenstein phase for the sun's side (`fog/shader.rs` `PHYSICAL_FOG`);
+  interiors keep their fog from 900 units out so small rooms stay clear.
+- *Exposure and tone*: Tony McMapface tonemapping stays on; the eye adaptation meters both
+  ways (lifting dark scenes and darkening bright ones) with its own limits
+  (`eye_adapt.rs`).
+- Window light rays (`IndFXLightRays*`, unlit additive meshes) are scaled so thin daytime
+  beams stay visible (`emittance.rs`).
+
+
 ## 4. Tried and dropped
 
 - **Bevy `ContactShadows`** on the sun (16 steps, 40 units, thickness 12): the right effect on

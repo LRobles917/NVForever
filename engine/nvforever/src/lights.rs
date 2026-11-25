@@ -83,11 +83,12 @@ pub fn display_clip() -> bool {
 }
 
 /// Whether the main world view uses Bevy's `Tonemapping::AgX` + Punchy look
-/// (`NVF_PHYSICAL_PBR=1`, unless overridden with `NVF_TONEMAP=clip` or `tony`).
+/// (Physical lighting; in a build with the developer aids `NVF_TONEMAP=clip` or `tony` keeps
+/// the display-value curves, for comparing).
 pub fn physical_agx() -> bool {
     nvf_assets::authored::physical_pbr()
-        && !std::env::var("NVF_TONEMAP")
-            .is_ok_and(|v| v.eq_ignore_ascii_case("clip") || v.eq_ignore_ascii_case("tony"))
+        && !crate::dev_aids::var("NVF_TONEMAP")
+            .is_some_and(|v| v.eq_ignore_ascii_case("clip") || v.eq_ignore_ascii_case("tony"))
 }
 
 pub struct LightsPlugin;
@@ -184,10 +185,16 @@ fn patch_display_sum(mut state: ResMut<FunctionsShader>, mut shaders: ResMut<Ass
     let Some(shader) = shaders.get(&state.handle) else { return };
     state.patched = true;
     let physical = nvf_assets::authored::physical_pbr();
+    // The reflection gate goes in with the display-value sum, and under Physical lighting when
+    // this run has authored reflections: then the reflection cube keeps the view's environment
+    // map, authored materials alone read it, and other surfaces take the light loop's flat
+    // ambient. Otherwise the sky's image-based light reaches every surface (physical_ibl.rs;
+    // graphics-enhanced.md §3.25).
+    let gating = !physical || nvf_assets::reflection_cube::enabled();
     let bevy::shader::Source::Wesl(source) = &shader.source else {
         error!("{PBR_FUNCTIONS}: not WESL; surfaces keep Bevy's linear lighting sum");
         crate::ssao_lighting::set_hook_state(crate::ssao_lighting::HookState::Failed);
-        if !physical {
+        if gating {
             reflection_gate_failed();
         }
         return;
@@ -196,7 +203,7 @@ fn patch_display_sum(mut state: ResMut<FunctionsShader>, mut shaders: ResMut<Ass
     let Some(patched) = (if physical { physical_patched(&source) } else { display_patched(&source) }) else {
         error!("{PBR_FUNCTIONS}: apply_pbr_lighting not as expected (Bevy changed?); surfaces keep Bevy's linear lighting sum");
         crate::ssao_lighting::set_hook_state(crate::ssao_lighting::HookState::Failed);
-        if !physical {
+        if gating {
             reflection_gate_failed();
         }
         return;
@@ -231,7 +238,7 @@ fn patch_display_sum(mut state: ResMut<FunctionsShader>, mut shaders: ResMut<Ass
     // reaches only fragments that opt in. Made whether or not reflections are on in this run;
     // without the opt-in def its text compiles to what Bevy's did without a cube. Under
     // physical PBR (`NVF_PHYSICAL_PBR=1`), PhysicalIblPlugin provides full-scene IBL directly.
-    let (patched, gated) = if physical {
+    let (patched, gated) = if !gating {
         (patched, false)
     } else {
         match reflection_gate::gate_patched(&patched) {
@@ -245,7 +252,7 @@ fn patch_display_sum(mut state: ResMut<FunctionsShader>, mut shaders: ResMut<Ass
     if let Err(e) = shaders.insert(&state.handle, patched) {
         error!("{PBR_FUNCTIONS}: the patched shader could not be stored ({e:?}); surfaces keep Bevy's lighting sum");
         crate::ssao_lighting::set_hook_state(crate::ssao_lighting::HookState::Failed);
-        if !physical {
+        if gating {
             reflection_gate_failed();
         }
         return;
@@ -259,7 +266,7 @@ fn patch_display_sum(mut state: ResMut<FunctionsShader>, mut shaders: ResMut<Ass
         crate::ssao_lighting::set_hook_state(crate::ssao_lighting::HookState::Installed);
         info!("lights: ambient occlusion hook installed");
     }
-    if !physical {
+    if gating {
         if gated {
             nvf_assets::reflection_cube::set_gate_state(nvf_assets::reflection_cube::GateState::Installed);
             info!("lights: reflection gate installed (the environment map light reaches opted-in fragments only)");
@@ -804,7 +811,9 @@ mod tests {
         assert!(physical_functions.contains("// nvf_physical_ibl_diff_ao"));
         assert!(physical_functions.contains("let nvf_ambient_lin = "));
         assert!(!physical_functions.contains("nvf_point_display"));
-        assert!(crate::sun_visibility::hook_patched(&physical_functions).is_some(), "sun_visibility hook applies after physical_patched");
+        let sun_patched = crate::sun_visibility::hook_patched(&physical_functions).expect("sun_visibility hook applies after physical_patched");
+        // Authored reflections under physical lighting: the reflection gate goes in after them.
+        assert!(reflection_gate::gate_patched(&sun_patched).is_some(), "the reflection gate applies after physical_patched");
     }
 
     /// CPU white-furnace check for EON (`Fd_OrenNayar` without dielectric coupling):

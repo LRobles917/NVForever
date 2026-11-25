@@ -4288,6 +4288,16 @@ Volumetric light (and its strength) are greyed (settings_layout `NEEDS_CHOICE`) 
 run (graphics.rs `volumetric_clouds_run`, `volumetric_light_run`; their saved values are
 kept). One look or the other.
 
+**With authored reflections** (#2981; a material pack and its Reflections row on) [design:
+spooknik's review of #3828, which switched them off]: Bevy gives a view one environment map,
+and both want it. In such a run the reflection cube keeps it: authored materials keep their
+cube, `metal_gain` and room fill through the reflection gate, which goes in after the
+physical light loop (lights/reflection_gate.rs `PHYSICAL_GATE_EDITS`), and every other
+surface takes the light loop's flat physical ambient in place of the sky's image-based light
+(physical_ibl.rs makes none in such a run). Without a pack the sky's light reaches every
+surface. Two cubes at once (the sky's for all, the room's for authored materials) are a
+follow-up.
+
 [design, #3827] An addition of NVForever's own for the enhanced look: not a fact about the
 original game, never a parity item, and never to be used to explain a difference from the
 original's frames. Off in both presets; with every row below off, the picture is the

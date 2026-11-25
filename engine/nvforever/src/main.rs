@@ -1922,6 +1922,9 @@ fn run_with_args(line: Vec<String>) -> AppExit {
     // (reflection_sky.rs).
     let reflections = settings::reflections_after_ini(graphics.authored_reflections, play.is_some().then(|| settings::given_switches(&args, &command_line())).as_ref());
     nvf_assets::reflection_cube::set_enabled(reflections && authored);
+    if physical_pbr && reflections && authored {
+        app.add_systems(Startup, || info!("physical PBR: authored reflections keep the view's environment map; the sky's image-based light is off and other surfaces take flat ambient"));
+    }
     app.add_systems(Startup, move || {
         info!(
             "authored reflections: {}",

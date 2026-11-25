@@ -1234,7 +1234,9 @@ below cover them all.
   start: the row changes the next start's lighting. Off by default and in every preset;
   the original's display-value lighting stays the default look. It does not work with the
   volumetric rows yet: while it is on, Volumetric clouds, Volumetric light and its strength
-  are greyed and do not run (their saved values are kept).
+  are greyed and do not run (their saved values are kept). With a material pack and
+  Reflections on authored materials, the pack's materials keep their reflections and other
+  surfaces take flat ambient light in place of the sky's.
 - Command-line switches: `--graphics-only`
 - More: docs/design/graphics-enhanced.md §3.25
 ### `bloom`: Bloom

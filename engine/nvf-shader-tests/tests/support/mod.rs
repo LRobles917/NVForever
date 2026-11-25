@@ -65,6 +65,12 @@ impl Compiler {
         Self::build(&[], false, false, true)
     }
 
+    /// The physical PBR patches with the reflection gate after them (Physical lighting in a
+    /// run with authored reflections, nvforever lights.rs `gating`).
+    pub fn with_physical_pbr_and_gate() -> Self {
+        Self::build(&[], false, true, true)
+    }
+
     fn build(
         remove_invariance: &[&str],
         ambient_occlusion_hook: bool,

@@ -650,6 +650,11 @@ fn update_physical_ibl(
         (With<Camera3d>, Or<(With<FlyCam>, With<ReflectionCamera>, With<LensCamera>)>),
     >,
 ) {
+    // With authored reflections this run, their cube keeps the view's environment map
+    // (lights.rs `gating`): the sky's light is not made or attached.
+    if nvf_assets::reflection_cube::enabled() {
+        return;
+    }
     let daylight = emittance.as_deref().map_or(0.0, |e| e.weather_daylight_luma);
     let params = IblParams::from_sky_with_daylight(&sky, daylight);
     if params.needs_rebuild(state.last) {

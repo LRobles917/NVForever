@@ -29,15 +29,24 @@
 //! covers: within the pack rules (`_p` BC4 unsigned, sides multiples of 4, full mip chains;
 //! pbr-materials.md "Compression and sizes").
 //!
+//! With `NVF_PLAY_TEST_PBR_GROUND_PACK=alpha` (#3789) the pack also replaces every landscape
+//! texture's diffuse ([`ground_diffuse_dds`]): one flat colour per texture, by its
+//! place in the list, and a checkerboard of 0 and 255 in the alpha, as DXT5 with a full mip chain, and a
+//! flat `_n` beside it (the name the game's landscape normal maps have), so the ground has no
+//! texture but its shading. The alpha has no part in the landscape's blend, so a spot where one layer covers the ground
+//! is of one colour; a renderer that blends by it shows the board in the colours of what lies
+//! under the layer. The height sets come with it, so the readback aid finds its spot.
+//!
 //! [engineering policy] A test aid: it makes the run unattended, writes no game folder and no
 //! mods folder, and nothing it writes is a fact about the original game.
 
+use bevy::color::{Hsva, Srgba};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{create_file, new_output_in};
 
-/// The test aid's switch (`=1`).
+/// The test aid's switch (`=1`, or `=alpha` for [`GroundPack::Alpha`]).
 pub const GROUND_PACK_ENV: &str = "NVF_PLAY_TEST_PBR_GROUND_PACK";
 
 /// The generated `_p`'s side, in texels.
@@ -53,9 +62,26 @@ pub const GROUND_DEPTH: f32 = *fnv_pbr::PARALLAX_DEPTH_RANGE.end();
 const RIDGE_EVERY: u32 = 16;
 const RIDGE_WIDTH: u32 = 2;
 
-/// Whether [`GROUND_PACK_ENV`] asks for the ground pack (`=1`).
-pub fn ground_pack_requested() -> bool {
-    std::env::var_os(GROUND_PACK_ENV).is_some_and(|v| v == "1")
+/// What the ground pack writes for each landscape texture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroundPack {
+    /// The height-only set.
+    Heights,
+    /// The height-only set and a diffuse of one flat colour with a checkerboard alpha (#3789).
+    Alpha,
+}
+
+/// The ground pack [`GROUND_PACK_ENV`] asks for (`=1`, `=alpha`), if any.
+pub fn ground_pack_requested() -> Option<GroundPack> {
+    ground_pack_named(&std::env::var_os(GROUND_PACK_ENV)?)
+}
+
+fn ground_pack_named(value: &std::ffi::OsStr) -> Option<GroundPack> {
+    match value.to_str()? {
+        "1" => Some(GroundPack::Heights),
+        "alpha" => Some(GroundPack::Alpha),
+        _ => None,
+    }
 }
 
 /// The generated height of the top level's block `(bx, by)`: 255 on a ridge (either
@@ -65,10 +91,10 @@ pub fn ground_height(bx: u32, by: u32) -> u8 {
     if on(bx) || on(by) { 255 } else { 0 }
 }
 
-/// The blocks of each level, finest first: the top level from [`ground_height`], each smaller
+/// The blocks of each level, finest first: the top level from `value` (by block), each smaller
 /// one the rounded mean of the top-level blocks it covers (one block for the 4x4 level and
-/// below, which BC4 still stores as a whole block each).
-fn levels() -> Vec<(u32, Vec<u8>)> {
+/// below, which BC4 and DXT5 still store as a whole block each).
+fn levels(value: fn(u32, u32) -> u8) -> Vec<(u32, Vec<u8>)> {
     let top_blocks = GROUND_SIDE / 4;
     let mut out = Vec::new();
     let mut side = GROUND_SIDE;
@@ -82,7 +108,7 @@ fn levels() -> Vec<(u32, Vec<u8>)> {
                 let mut sum = 0u32;
                 for y in 0..cover {
                     for x in 0..cover {
-                        sum += u32::from(ground_height(bx * cover + x, by * cover + y));
+                        sum += u32::from(value(bx * cover + x, by * cover + y));
                     }
                 }
                 let n = cover * cover;
@@ -100,20 +126,71 @@ fn levels() -> Vec<(u32, Vec<u8>)> {
 /// The generated `_p`: a legacy DDS header (FourCC `BC4U`, a linear size and a mip count),
 /// then every level's blocks, each block one value (endpoint 0, endpoint 1 and every index 0).
 pub fn ground_height_dds() -> Vec<u8> {
-    let levels = levels();
-    let mut b = vec![0u8; 128];
-    b[..4].copy_from_slice(b"DDS ");
-    let top_size = (GROUND_SIDE / 4) * (GROUND_SIDE / 4) * 8;
-    // [documented: Microsoft, "DDS_HEADER": flags CAPS|HEIGHT|WIDTH|PIXELFORMAT (0x1007),
-    // MIPMAPCOUNT 0x20000, LINEARSIZE 0x80000; pixel format FOURCC 0x4; caps TEXTURE 0x1000,
-    // COMPLEX 0x8, MIPMAP 0x400000]
-    for (at, v) in [(4, 124u32), (8, 0x1007 | 0x20000 | 0x80000), (12, GROUND_SIDE), (16, GROUND_SIDE), (20, top_size), (28, levels.len() as u32), (76, 32), (80, 4), (108, 0x1000 | 0x8 | 0x40_0000)] {
-        b[at..at + 4].copy_from_slice(&v.to_le_bytes());
-    }
-    b[84..88].copy_from_slice(b"BC4U");
+    let levels = levels(ground_height);
+    let mut b = header(b"BC4U", 8, levels.len());
     for (_, values) in &levels {
         for &v in values {
             b.extend_from_slice(&[v, 0, 0, 0, 0, 0, 0, 0]);
+        }
+    }
+    b
+}
+
+/// The legacy DDS header of a [`GROUND_SIDE`] square texture: its FourCC, bytes a block and
+/// levels.
+fn header(four_cc: &[u8; 4], block: u32, levels: usize) -> Vec<u8> {
+    let mut b = vec![0u8; 128];
+    b[..4].copy_from_slice(b"DDS ");
+    let top_size = (GROUND_SIDE / 4) * (GROUND_SIDE / 4) * block;
+    // [documented: Microsoft, "DDS_HEADER": flags CAPS|HEIGHT|WIDTH|PIXELFORMAT (0x1007),
+    // MIPMAPCOUNT 0x20000, LINEARSIZE 0x80000; pixel format FOURCC 0x4; caps TEXTURE 0x1000,
+    // COMPLEX 0x8, MIPMAP 0x400000]
+    for (at, v) in [(4, 124u32), (8, 0x1007 | 0x20000 | 0x80000), (12, GROUND_SIDE), (16, GROUND_SIDE), (20, top_size), (28, levels as u32), (76, 32), (80, 4), (108, 0x1000 | 0x8 | 0x40_0000)] {
+        b[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    b[84..88].copy_from_slice(four_cc);
+    b
+}
+
+/// The alpha checkerboard's squares, in 4x4 blocks of the top level: 8 blocks are 32 texels,
+/// an eighth of a texture repeat (32 world units at the game's 256).
+const BOARD_SQUARE: u32 = 8;
+
+/// The generated diffuse's alpha at the top level's block `(bx, by)`: 0 or 255.
+pub fn ground_alpha(bx: u32, by: u32) -> u8 {
+    if (bx / BOARD_SQUARE + by / BOARD_SQUARE).is_multiple_of(2) { 255 } else { 0 }
+}
+
+/// The flat colour of the `i`th texture as RGB565: hues a golden ratio of the circle apart, and
+/// five brightnesses in turn, so layers that lie together differ in both.
+fn ground_colour(i: usize) -> u16 {
+    let hue = ((i as u32).wrapping_mul(40503) & 0xffff) as f32 / 65536.0;
+    let c = Srgba::from(Hsva::hsv(hue * 360.0, 0.6, [0.9, 0.25, 0.6, 0.4, 0.75][i % 5]));
+    let part = |x: f32, top: f32| (x * top) as u16;
+    part(c.red, 31.0) << 11 | part(c.green, 63.0) << 5 | part(c.blue, 31.0)
+}
+
+/// The generated diffuse of the `i`th texture: a legacy DDS header (FourCC `DXT5`, a linear size and a mip
+/// count), then every level's blocks [documented: a DXT5 block is an alpha half (two
+/// endpoints, 3-bit indices) and a DXT1 colour half (two RGB565 endpoints, 2-bit indices),
+/// Microsoft "Texture Block Compression in Direct3D 11"]: the alpha's endpoints both the
+/// block's value, the colour's both the texture's colour, every index 0.
+pub fn ground_diffuse_dds(i: usize) -> Vec<u8> {
+    dxt5(ground_alpha, ground_colour(i))
+}
+
+/// The generated normal map: straight up (RGB565 16, 32, 31), alpha 0 (no specular mask).
+pub fn ground_normal_dds() -> Vec<u8> {
+    dxt5(|_, _| 0, 16 << 11 | 32 << 5 | 31)
+}
+
+fn dxt5(alpha: fn(u32, u32) -> u8, colour: u16) -> Vec<u8> {
+    let levels = levels(alpha);
+    let mut b = header(b"DXT5", 16, levels.len());
+    let [lo, hi] = colour.to_le_bytes();
+    for (_, values) in &levels {
+        for &v in values {
+            b.extend_from_slice(&[v, v, 0, 0, 0, 0, 0, 0, lo, hi, lo, hi, 0, 0, 0, 0]);
         }
     }
     b
@@ -148,8 +225,9 @@ fn safe_relative(rel: &str) -> bool {
 
 /// Every generated file for the diffuse paths `diffuses`, by its path under the pack folder
 /// (forward slashes), by stem and without repeats (two spellings of one texture share a set):
-/// each set's `_p`, then its scalar file.
-pub fn ground_fixture<S: AsRef<str>>(diffuses: &[S]) -> Vec<(String, Vec<u8>)> {
+/// each set's `_p`, then its scalar file, then with [`GroundPack::Alpha`] the diffuse itself
+/// and its `_n`.
+pub fn ground_fixture<S: AsRef<str>>(pack: GroundPack, diffuses: &[S]) -> Vec<(String, Vec<u8>)> {
     let mut stems: Vec<String> = diffuses.iter().flat_map(|d| stems_for(d.as_ref())).collect();
     stems.sort();
     stems.dedup();
@@ -157,11 +235,19 @@ pub fn ground_fixture<S: AsRef<str>>(diffuses: &[S]) -> Vec<(String, Vec<u8>)> {
     let rel = |p: String| p.replace('\\', "/");
     stems
         .into_iter()
-        .flat_map(|stem| {
-            [
+        .enumerate()
+        .flat_map(|(i, stem)| {
+            let mut files = vec![
                 (rel(fnv_pbr::member_path(&stem, fnv_pbr::Member::Height)), height.clone()),
                 (rel(fnv_pbr::member_path(&stem, fnv_pbr::Member::Scalars)), scalars.clone()),
-            ]
+            ];
+            if pack == GroundPack::Alpha {
+                if let Some(d) = fnv_pbr::diffuse_stem(&stem) {
+                    files.push((rel(format!("{d}.dds")), ground_diffuse_dds(i)));
+                    files.push((rel(format!("{d}_n.dds")), ground_normal_dds()));
+                }
+            }
+            files
         })
         .collect()
 }
@@ -172,10 +258,10 @@ pub fn ground_fixture<S: AsRef<str>>(diffuses: &[S]) -> Vec<(String, Vec<u8>)> {
 /// created new. On any failure the run's own folder is removed again and nothing is mounted.
 /// The caller mounts the folder over every other loose layer for this run only. The folder,
 /// the number of sets and the number of files written.
-pub fn seed_ground_pack<S: AsRef<str>>(diffuses: &[S]) -> Result<(PathBuf, usize, usize), String> {
+pub fn seed_ground_pack<S: AsRef<str>>(pack: GroundPack, diffuses: &[S]) -> Result<(PathBuf, usize, usize), String> {
     let home = ground_pack_home(std::env::var_os("NVFOREVER_HOME"))?;
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| format!("clock: {e}"))?.as_nanos();
-    seed_ground_pack_in(&home, stamp, std::process::id(), diffuses)
+    seed_ground_pack_in(&home, stamp, std::process::id(), pack, diffuses)
 }
 
 /// The home the ground pack may write under: `NVFOREVER_HOME` when it is set and not empty
@@ -184,14 +270,14 @@ fn ground_pack_home(value: Option<std::ffi::OsString>) -> Result<PathBuf, String
     value.filter(|v| !v.is_empty()).map(PathBuf::from).ok_or_else(|| format!("{GROUND_PACK_ENV}=1 needs an explicit, non-empty NVFOREVER_HOME"))
 }
 
-pub(super) fn seed_ground_pack_in<S: AsRef<str>>(home: &Path, stamp: u128, process: u32, diffuses: &[S]) -> Result<(PathBuf, usize, usize), String> {
-    let files = ground_fixture(diffuses);
+pub(super) fn seed_ground_pack_in<S: AsRef<str>>(home: &Path, stamp: u128, process: u32, pack: GroundPack, diffuses: &[S]) -> Result<(PathBuf, usize, usize), String> {
+    let files = ground_fixture(pack, diffuses);
     if files.is_empty() {
         return Err("no landscape texture to write a set for; nothing mounted".into());
     }
     let dir = new_output_in(home, "pbr-ground-pack", stamp, process).map_err(|e| format!("fresh ground pack folder under {}: {e}", home.display()))?;
     match write_files(&dir, &files) {
-        Ok(()) => Ok((dir, files.len() / 2, files.len())),
+        Ok(()) => Ok((dir, files.iter().filter(|(rel, _)| rel.ends_with(".toml")).count(), files.len())),
         Err(e) => {
             // The folder is this run's own (just reserved): nothing else is in it.
             let _ = std::fs::remove_dir_all(&dir);

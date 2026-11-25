@@ -26,7 +26,7 @@
 //! **What is under the centre**, logged for every sequence before shot A: the physics ray
 //! along the view meets the landscape of a cell or a placed object; for the landscape the
 //! ground cover there (terrain.rs `ground_cover`, an estimate: the meshes' interpolation of
-//! the painted opacities, each layer texture's alpha taken as 1). Where the march would move
+//! the painted opacities). Where the march would move
 //! less than [`BARE_SHARE`] of it the verdict is `bare`: the readback says nothing about the
 //! march. With the aid's own pose a cover that cannot be told counts as none (`bare`).
 //!

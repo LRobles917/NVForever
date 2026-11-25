@@ -118,10 +118,10 @@
 //! hold a height map are edited, noted for the frame ([`ParallaxEdits`]), and the mesh
 //! terrain blend does not recapture for those edits alone when what its captures are made
 //! from compares equal (the bake copy drops the switch). terrain.wesl marches once over the
-//! blended depth, each layer's ordered share (painted opacity x the layer texture's alpha)
+//! blended depth, each layer's ordered share of the painted opacity
 //! x its own set's depth x (1 - its height), on one step grid for every quadrant
 //! ([`PARALLAX_SCALE`]), then reads every texture at the one shifted coordinate, the layers
-//! blended by the alphas read at the plain coordinate, the march's own; the march fades out
+//! blended by the march's own shares; the march fades out
 //! between [`PARALLAX_FADE`]'s distances, well inside the loaded cells. A layer without a
 //! height map, and the base always, adds no depth (flat at the surface), so the shift falls
 //! to nothing where the layers with height maps fade out, a layer moves as far on both sides
@@ -703,8 +703,7 @@ fn ground_pack_list(diffuses: impl Iterator<Item = Option<String>>) -> Vec<Strin
 /// [`folded_layers`] folded into the quadrant's draw and those past them drawn on their own
 /// over it (unshifted, module notes "Parallax"), and the folded material the cell made for
 /// them ([`TerrainCache`]), with the height maps it holds. A CPU estimate from the painted
-/// opacities alone (each layer texture's alpha, which also enters the shares, taken as 1)
-/// [design].
+/// opacities [design].
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroundCover {
     pub grid: (i32, i32),
@@ -2886,14 +2885,15 @@ mod tests {
         assert!(terrain.contains("    let scale = parallax_scales(instance_index, values.x);"));
         // One set of weights, worked out at the plain place before the shift.
         for line in [
-            "            parallax_texels[k] = layer_diffuse_antitiled(k, in.instance_index, parallax_plain_taps, parallax_plain_fp);",
+            "            parallax_paint[k] = saturate(opacity[k]);",
+            "                    let parallax_texel = layer_diffuse_antitiled(k, in.instance_index, parallax_plain_taps, parallax_plain_fp);",
             "        parallax_w = terrain_ordered_shares(parallax_paint, parallax_n);",
             "            parallax_w = terrain_height_weights(parallax_w, parallax_height, parallax_params.x);",
         ] {
             assert!(terrain.find(line).unwrap_or_else(|| panic!("{line}")) < shift, "{line}: before the shift");
         }
         assert!(terrain.contains("        in.uv += parallax_shift(in.instance_index, in.uv, in.world_position, calculate_tbn_mikktspace(in.world_normal, in.world_tangent), parallax_w, parallax_n, parallax_footprint);"));
-        assert!(terrain.contains("                @if(TERRAIN_PARALLAX) let share = saturate(opacity[k]) * parallax_alpha[k];"), "the ordinary blend by the march's alphas");
+        assert!(terrain.contains("                @if(TERRAIN_PARALLAX) let share = saturate(opacity[k]);"), "the ordinary blend by the march's shares");
         assert!(terrain.contains("            @if(TERRAIN_PARALLAX) f = parallax_w;"), "the height blend by the march's weights");
         // The drawn reads: at the moved place with the plain place's gradients, base included.
         assert!(terrain.contains("            parallax_ddx = parallax_dx * exp2(view.mip_bias);"));
@@ -3090,9 +3090,8 @@ mod tests {
         for line in [
             "                if remaining == 0.0 {",
             "                if o == 0.0 {",
-            "                let a = saturate(o * raw[k + 1u].a);",
-            "                w[k + 1u] = a * remaining;",
-            "                remaining *= 1.0 - a;",
+            "                w[k + 1u] = o * remaining;",
+            "                remaining *= 1.0 - o;",
             "            if w[0] != 0.0 {",
             "                    height[0] = terrain_height(raw[0].rgb, base_reference(in.instance_index, vec2(0.5), vec2(0.0), vec2(0.0), 0.0), anti_params.y);",
             "                        height[k + 1u] = terrain_height(raw[k + 1u].rgb, layer_reference(k, in.instance_index, vec2(0.5), vec2(0.0), vec2(0.0), 0.0), anti_params.y);",
@@ -3102,9 +3101,8 @@ mod tests {
     }
 
     /// CPU mirror of terrain.wesl's anti-tiled walk over the layers: the ordered shares
-    /// (base at 0, layer k at k + 1) and which diffuse textures were read. `alpha` is the
-    /// texture alpha a read would give.
-    fn antitiled_walk(opacity: [f32; 6], alpha: [f32; 7], n: usize) -> ([f32; 7], [bool; 7]) {
+    /// (base at 0, layer k at k + 1) and which diffuse textures were read.
+    fn antitiled_walk(opacity: [f32; 6], n: usize) -> ([f32; 7], [bool; 7]) {
         let mut w = [0.0f32; 7];
         let mut read = [false; 7];
         let mut remaining = 1.0f32;
@@ -3117,9 +3115,8 @@ mod tests {
                 continue;
             }
             read[k + 1] = true;
-            let a = (o * alpha[k + 1]).clamp(0.0, 1.0);
-            w[k + 1] = a * remaining;
-            remaining *= 1.0 - a;
+            w[k + 1] = o * remaining;
+            remaining *= 1.0 - o;
         }
         w[0] = remaining;
         read[0] = w[0] != 0.0;
@@ -3128,8 +3125,7 @@ mod tests {
 
     #[test]
     fn the_antitiled_walk_gives_the_ordered_shares_and_reads_only_what_can_show() {
-        // Synthetic opacities and alphas (no texture's values): the same shares as the
-        // ordered blend, exactly.
+        // Synthetic opacities: the same shares as the ordered blend, exactly.
         let mut seed = 0x2551u32;
         let mut next = || {
             seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -3138,22 +3134,16 @@ mod tests {
         for case in 0..600 {
             let n = case % 7;
             let mut opacity = [0.0f32; 6];
-            let mut alpha = [1.0f32; 7];
-            for k in 0..6 {
-                opacity[k] = match (next() * 5.0) as u32 {
+            for o in &mut opacity {
+                *o = match (next() * 5.0) as u32 {
                     0 => 0.0,
                     1 => 1.0,
                     2 => 1e-4,
                     _ => next(),
                 };
-                alpha[k + 1] = match (next() * 4.0) as u32 {
-                    0 => 0.0,
-                    1 => 1.0,
-                    _ => next(),
-                };
             }
-            let paint: [f32; 6] = std::array::from_fn(|k| opacity[k].clamp(0.0, 1.0) * alpha[k + 1]);
-            let (w, read) = antitiled_walk(opacity, alpha, n);
+            let paint = opacity.map(|o| o.clamp(0.0, 1.0));
+            let (w, read) = antitiled_walk(opacity, n);
             assert_eq!(w, ordered_shares(paint, n), "case {case}");
             for k in 0..n {
                 // Opacity 0: never read. A share above 0: always read.
@@ -3176,19 +3166,14 @@ mod tests {
             }
         }
         // A fully covering later layer: everything under it (the base too) is not read.
-        let (w, read) = antitiled_walk([0.6, 0.3, 1.0, 0.0, 0.0, 0.0], [1.0; 7], 3);
+        let (w, read) = antitiled_walk([0.6, 0.3, 1.0, 0.0, 0.0, 0.0], 3);
         assert_eq!(w, [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]);
         assert_eq!(read, [false, false, false, true, false, false, false]);
-        // An alpha of 0 is only found by reading: the layer is read and shares nothing.
-        let mut alpha = [1.0; 7];
-        alpha[2] = 0.0;
-        let (w, read) = antitiled_walk([0.0, 1.0, 0.0, 0.0, 0.0, 0.0], alpha, 2);
-        assert!(read[2] && w[2] == 0.0 && read[0] && w[0] == 1.0);
         // A tiny painted share survives (exact zeros skip, no epsilon).
-        let (w, read) = antitiled_walk([1e-4, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0; 7], 1);
+        let (w, read) = antitiled_walk([1e-4, 0.0, 0.0, 0.0, 0.0, 0.0], 1);
         assert!(read[1] && w[1] > 0.0 && w[1] < 1e-3);
         // Unpainted ground reads the base alone.
-        assert_eq!(antitiled_walk([0.0; 6], [1.0; 7], 6).1, [true, false, false, false, false, false, false]);
+        assert_eq!(antitiled_walk([0.0; 6], 6).1, [true, false, false, false, false, false, false]);
     }
 
     #[test]
@@ -3577,11 +3562,11 @@ mod tests {
     }
 
     /// The separately drawn overflow layers over the base draw's colour: each mixed in by
-    /// saturate(opacity) x its alpha, white-tinted (graphics-enhanced.md §3.14: the
+    /// saturate(opacity), white-tinted (graphics-enhanced.md §3.14: the
     /// detail's albedo approximation of their lit blend, the same for both mirrors).
     fn overflow_mix(mut colour: [f32; 3], c: &DetailCase, from: usize) -> [f32; 3] {
         for (texel, o) in &c.overflow[from..] {
-            let share = o.clamp(0.0, 1.0) * texel[3];
+            let share = o.clamp(0.0, 1.0);
             let layer = mul3(rgb(*texel), c.tint);
             for (x, l) in colour.iter_mut().zip(layer) {
                 *x = *x * (1.0 - share) + l * share;
@@ -3622,9 +3607,8 @@ mod tests {
                         continue;
                     }
                     raw[k + 1] = l.0;
-                    let s = (o * raw[k + 1][3]).clamp(0.0, 1.0);
-                    wt[k + 1] = s * remaining;
-                    remaining *= 1.0 - s;
+                    wt[k + 1] = o * remaining;
+                    remaining *= 1.0 - o;
                 }
                 wt[0] = remaining;
             } else {
@@ -3636,7 +3620,7 @@ mod tests {
                         continue;
                     }
                     raw[k + 1] = l.0;
-                    paint[k] = o * raw[k + 1][3];
+                    paint[k] = o;
                 }
                 wt = ordered_shares(paint, n);
             }
@@ -3669,13 +3653,9 @@ mod tests {
             }
         }
         for k in if weighted { folded } else { 0 }..total {
-            // #2661 review: opacity first, then the share; either exactly 0 skips the overlay.
+            // #2661 review: an opacity of exactly 0 skips the overlay.
             let (texel, o, is_folded) = overlay(k);
-            let o = o.clamp(0.0, 1.0);
-            if o == 0.0 {
-                continue;
-            }
-            let share = o * texel[3];
+            let share = o.clamp(0.0, 1.0);
             if share == 0.0 {
                 continue;
             }
@@ -3701,7 +3681,7 @@ mod tests {
             (None, false) => {
                 let mut colour = base_colour;
                 for l in &c.folded {
-                    let share = l.1.clamp(0.0, 1.0) * l.0[3];
+                    let share = l.1.clamp(0.0, 1.0);
                     for (x, v) in colour.iter_mut().zip(layer(l)) {
                         *x = *x * (1.0 - share) + v * share;
                     }
@@ -3711,10 +3691,9 @@ mod tests {
             _ => {
                 let w = if anti {
                     let opacity: [f32; 6] = std::array::from_fn(|k| c.folded.get(k).map_or(0.0, |l| l.1));
-                    let alpha: [f32; 7] = std::array::from_fn(|i| if i == 0 { 1.0 } else { c.folded.get(i - 1).map_or(1.0, |l| l.0[3]) });
-                    antitiled_walk(opacity, alpha, n).0
+                    antitiled_walk(opacity, n).0
                 } else {
-                    let paint: [f32; 6] = std::array::from_fn(|k| c.folded.get(k).map_or(0.0, |l| l.1.clamp(0.0, 1.0) * l.0[3]));
+                    let paint: [f32; 6] = std::array::from_fn(|k| c.folded.get(k).map_or(0.0, |l| l.1.clamp(0.0, 1.0)));
                     ordered_shares(paint, n)
                 };
                 let f = match height {
@@ -3750,7 +3729,8 @@ mod tests {
     /// both height references: the detail's mirror ([`detail_mirror`], driven by the table
     /// words the publication packs from `DetailFeatures`) against this module's mirrors of
     /// terrain.wesl ([`near_mirror`]). The shader's lines are kept to the mirror by
-    /// mesh_blend_shader_tests.rs. Synthetic texels, opacities and references only.
+    /// mesh_blend_shader_tests.rs. Synthetic texels, opacities and references only. The
+    /// texels' alpha has no part in either (#3789).
     #[test]
     fn the_mesh_blend_detail_composes_as_the_near_draw_with_and_without_the_switches() {
         use nvf_assets::nif_surface_blend::{DetailFeatures, DetailQuadrant};
@@ -3792,6 +3772,13 @@ mod tests {
                 for (d, e) in detail.iter().zip(near) {
                     assert!((d - e).abs() < 2e-5, "case {case} switches {switches}: detail {detail:?} near {near:?}");
                 }
+                // #3789: whatever the texels' alpha.
+                let clear = DetailCase {
+                    folded: c.folded.iter().map(|l| ([l.0[0], l.0[1], l.0[2], 0.0], l.1, l.2)).collect(),
+                    overflow: c.overflow.iter().map(|l| ([l.0[0], l.0[1], l.0[2], 0.0], l.1)).collect(),
+                    ..c
+                };
+                assert_eq!((detail_mirror(&words, &clear), near_mirror(&clear, height.filter(|_| n > 0), anti)), (detail, near), "case {case}");
                 checked[switches] += 1;
             }
         }

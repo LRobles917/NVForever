@@ -4320,7 +4320,13 @@ and names its functions `vc_m2_*`); a run draws with it and nothing else.
 clouds and Volumetric light run under Physical lighting. The clouds are lit as the physical
 dome they lie on is drawn, by the surfaces' sun colour and the physical sky's colours, in
 linear light, and go to the tonemapper without its inverse (sky.rs `physical_cloud_light`,
-volumetric_clouds.rs `compose_uniform`). Volumetric light's air composite still reads the
+volumetric_clouds.rs `compose_uniform`). Their sun has the ground's gain (`PHYSICAL_SUN_GAIN`,
+by night `PHYSICAL_MOON_GAIN`): without it they were lit by about a seventh of the ground's
+sun and came out grey against the sky [observed: Goodsprings at 17:30, 2026-11-26]. Their
+direct light takes the physical sun's own colour whole (`PHYSICAL_SUN_COLOUR_SHARE` 1, the
+`SUNCOLOUR` aid's value under this row), not the weather's cloud colours at its luminance,
+and their light from below is the dome's mean of overhead and horizon, not the weather's
+Ambient [design]. Volumetric light's air composite still reads the
 picture as display values (medium_air_compose.wesl); how it meets linear light is open with
 its author.
 

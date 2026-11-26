@@ -14510,7 +14510,7 @@ forbid = [
 [[scenario]]
 name = "settings-note-budget"
 source = "#2377: every settings note within the budget (200 characters, no command-line switch) once every row is registered, and two lines at the page's width in a 16:9 view once the pause menu's fonts are loaded; the rows' labels and values laid out at that width, a row whose text had to be cut logged"
-note = "`cut to fit` is reported, not failed: a row cut there is drawn with \"...\" and logs `settings: text of `<key>` cut to fit: ...`"
+note = "`cut to fit` is reported, not failed: a row cut there is drawn with \"...\" and logs `settings: text of `<key>` cut to fit: ...`. The two-line notes fit the default font again after 24 were shortened (#4612), so the marks of 2026-11-16 were dropped."
 areas = ["settings"]
 paths = ["engine/nvf-play/src/settings.rs", "engine/nvf-play/src/pause.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/quality.rs", "lang/"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page,12:tab:Graphics" }
@@ -14518,12 +14518,12 @@ args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 15
 expect = [
   { re = 'settings: \d+ notes checked, 0 over the budget \(200 characters\)', count = 1, label = "every registered note within 200 characters, no switch in it (at the start)" },
-  { re = 'settings: \d+ notes checked, 0 over the budget \(200 characters, two lines\)', count = 1, label = "and two lines at the page's 16:9 width (once the pause menu's fonts are loaded)" , known_failing = "2026-11-16: 49 of #1892's tweak notes run to three lines in the game's raster font, the menus' default (Menu Font Original); within two in the sharp font. Main draws the same notes in the same font" },
+  { re = 'settings: \d+ notes checked, 0 over the budget \(200 characters, two lines\)', count = 1, label = "and two lines at the page's 16:9 width (once the pause menu's fonts are loaded)" },
   { re = 'settings: \d+ rows laid out, \d+ cut to fit', count = 1, label = "the rows' labels and values laid out at that width" },
 ]
 forbid = [
   { re = 'settings: note of `\S+` over the budget: \d+ characters', label = "no note over the 200 characters" },
-  { re = 'settings: note of `\S+` over the budget: \d+ lines', label = "no note over two lines", known_failing = "2026-11-16: 49 of #1892's tweak notes run to three lines in the game's raster font, the menus' default (Menu Font Original); within two in the sharp font. Main draws the same notes in the same font" },
+  { re = 'settings: note of `\S+` over the budget: \d+ lines', label = "no note over two lines" },
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
 ]
 

@@ -4358,9 +4358,9 @@ The display-value lighting sum (world.md §8) is replaced by linear lighting:
   metallic channel counts. #3828's branch changed the shade light's return, the unlit
   colours' place before the fog and the decals' fade for every view; here they are under
   this row only, so the default look is unchanged.
-- Window light rays (`IndFXLightRays*`, unlit additive meshes, weather-lit) are scaled by
-  `RAY_MESH_PHYSICAL_BOOST` so thin daytime beams stay visible through AgX, and the weather
-  sources' daylight brightness is kept for the image-based light (`emittance.rs`).
+- The weather sources' daylight brightness (the window light rays' weather regions) is kept
+  for the indoor image-based light's day lift (`emittance.rs` `weather_daylight_luma`); the
+  rays themselves are drawn as in the display-value look.
 
 | Constant | Value | Tag and basis |
 |---|---|---|
@@ -4378,7 +4378,6 @@ The display-value lighting sum (world.md §8) is replaced by linear lighting:
 | `PHYSICAL_LOW_REF`, `PHYSICAL_HIGH_REF` (eye_adapt.rs) | −6.0, −1.2 EV | [design] |
 | `PHYSICAL_LIFT_SLOPE`, `PHYSICAL_MAX_LIFT`, `PHYSICAL_DARKEN_SLOPE`, `PHYSICAL_MAX_DARKEN` | 0.68, 2.6, 0.45, 1.4 | [design] |
 | `PHYSICAL_METER_FILTER` | 10-98 % | [design] the display-value meter's 10-100 % (eye_adapt.rs `METER_FILTER`) less the brightest 2 % |
-| `RAY_MESH_PHYSICAL_BOOST` (emittance.rs) | 1.85 | [design] |
 
 - **Cost**: not measured yet (to be measured as in §5, the Goodsprings and Prospector
   Saloon frames, with the row on and off).

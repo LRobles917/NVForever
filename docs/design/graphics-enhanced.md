@@ -4365,7 +4365,6 @@ The display-value lighting sum (world.md §8) is replaced by linear lighting:
 | roughness floor (`ROUGHNESS_FLOOR_EDIT`) | 0.045 | [documented: Filament] |
 | unflagged shapes' reflectance and roughness (nif_spawn.rs) | 0.32, at least 0.86 | [design] |
 | `PHYSICAL_SUN_GAIN`, `PHYSICAL_MOON_GAIN`, `PHYSICAL_INTERIOR_DIR_GAIN` (sky.rs) | 6.8, 1.2, 0.85 | [design] the display-value shares (world.md §8) carried into linear light |
-| `PHYSICAL_SUN_SOUTH` (sky.rs) | 32° | [design] the sun's path tilted towards a southern Nevada sun; the display-value mode keeps the 9° fitted to the original |
 | `ATMO_RE`, `ATMO_RA` (sky.rs, sky.wesl) | 6360, 6460 km | [documented: Bruneton and Neyret 2008; Hillaire 2020] |
 | `ATMO_H0` | 1.1 km | [hypothesis] the Mojave floor's height above the sea |
 | `ATMO_HR`, `ATMO_HM` | 8.0, 1.0 km | [design] Rayleigh's usual 8 km scale height [documented: Bruneton and Neyret 2008]; Mie lowered from their 1.2 km for desert air |

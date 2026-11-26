@@ -206,12 +206,6 @@ pub(crate) const MOON_HIDDEN_Y: f32 = -0.1;
 /// How far south of the east-west line the sun's path runs, in radians (9°) [hypothesis,
 /// fitted to the original game's sun positions; fnv_world::sky::sun_direction].
 const SUN_SOUTH: f32 = 9.0 * PI / 180.0;
-/// Realistic southern Nevada (~35.8° N Goodsprings) solar declination offset for physical PBR.
-const PHYSICAL_SUN_SOUTH: f32 = 32.0 * PI / 180.0;
-
-fn effective_sun_south() -> f32 {
-    if nvf_assets::authored::physical_pbr() { PHYSICAL_SUN_SOUTH } else { SUN_SOUTH }
-}
 /// Elevation (radians) below which the directional light fades out towards the horizon.
 const HORIZON_FADE: f32 = 0.1;
 /// Game hours per real second at the default TimeScale of 30 [documented: GECK wiki
@@ -1547,7 +1541,7 @@ impl SkyState {
         // once the sun is down].
         let fade = if self.interior.is_some() { 0.0 } else { smoothstep(-2.0, 3.0, self.sun_elevation()) };
         let sun_col = Vec3::from_array(self.color(ColorType::Sun)) * fade;
-        let south = effective_sun_south();
+        let south = SUN_SOUTH;
         let dir = game_to_bevy().rotation * Vec3::from_array(sun_direction(&self.climate, self.hour, south));
         let half_tan = |deg: f32| (deg / 2.0).to_radians().tan();
         let fair_value = |base: f32, fair: f32| base + (fair - base) * fair_sun;
@@ -1592,29 +1586,29 @@ impl SkyState {
 
     /// Direction towards the sun, in Bevy's axes (also below the horizon).
     pub fn sun_dir(&self) -> Vec3 {
-        game_to_bevy().rotation * Vec3::from_array(sun_direction(&self.climate, self.hour, effective_sun_south()))
+        game_to_bevy().rotation * Vec3::from_array(sun_direction(&self.climate, self.hour, SUN_SOUTH))
     }
 
     /// Direction towards the sun, in game axes (also below the horizon).
     pub fn sun_dir_game(&self) -> [f32; 3] {
-        sun_direction(&self.climate, self.hour, effective_sun_south())
+        sun_direction(&self.climate, self.hour, SUN_SOUTH)
     }
 
     /// Compass heading of the sun in degrees (0 north, 90 east).
     pub fn sun_heading(&self) -> f32 {
-        let d = sun_direction(&self.climate, self.hour, effective_sun_south());
+        let d = sun_direction(&self.climate, self.hour, SUN_SOUTH);
         d[0].atan2(d[1]).to_degrees().rem_euclid(360.0)
     }
 
     /// Sun elevation above the horizon in degrees.
     pub fn sun_elevation(&self) -> f32 {
-        sun_direction(&self.climate, self.hour, effective_sun_south())[2].clamp(-1.0, 1.0).asin().to_degrees()
+        sun_direction(&self.climate, self.hour, SUN_SOUTH)[2].clamp(-1.0, 1.0).asin().to_degrees()
     }
 
     /// Sun elevation in degrees at another `hour` of the same climate (any value; the
     /// heat haze's afternoon lag, `heat_haze.rs`).
     pub fn sun_elevation_at(&self, hour: f32) -> f32 {
-        sun_direction(&self.climate, hour, effective_sun_south())[2].clamp(-1.0, 1.0).asin().to_degrees()
+        sun_direction(&self.climate, hour, SUN_SOUTH)[2].clamp(-1.0, 1.0).asin().to_degrees()
     }
 
     /// Star and moon visibility (0..1) at this hour.
@@ -2424,7 +2418,7 @@ pub fn log_sun_cascades(
 /// the directional light is the moon, from the opposite side) and the share of its
 /// strength the light has at that height (it fades out within [`HORIZON_FADE`]; [`update_sky`]).
 pub fn sun_height_and_fade(sky: &SkyState) -> (f32, f32) {
-    let y = (game_to_bevy().rotation * Vec3::from_array(sun_direction(&sky.climate, sky.hour, effective_sun_south()))).y;
+    let y = (game_to_bevy().rotation * Vec3::from_array(sun_direction(&sky.climate, sky.hour, SUN_SOUTH))).y;
     (y, (y.abs() / HORIZON_FADE.sin()).min(1.0))
 }
 
@@ -2556,7 +2550,7 @@ pub fn update_night_sky(
     let Ok(cam_t) = cam.single() else { return };
     let cam_pos = cam_t.translation;
     let indoors = sky.interior.is_some();
-    let sun_dir = game_to_bevy().rotation * Vec3::from_array(sun_direction(&sky.climate, sky.hour, effective_sun_south()));
+    let sun_dir = game_to_bevy().rotation * Vec3::from_array(sun_direction(&sky.climate, sky.hour, SUN_SOUTH));
     let (star_vis, moon_vis) = if indoors { (0.0, 0.0) } else { sky.night_visibility() };
     let refresh = *last != Some((sky.hour, sky.days_passed));
     *last = Some((sky.hour, sky.days_passed));
@@ -2840,7 +2834,7 @@ pub fn update_sky(
     }
     // The sun light turns with the game clock every frame, not with the sky's half-minute
     // steps (`SkyState::sun_light_hour`); its colour still changes with the sky below.
-    let light_dir = to_bevy.rotation * Vec3::from_array(sun_direction(c, sky.sun_light_hour(), effective_sun_south()));
+    let light_dir = to_bevy.rotation * Vec3::from_array(sun_direction(c, sky.sun_light_hour(), SUN_SOUTH));
     let moon_mult = sky.moon_brightness_multiplier();
     if let Ok((mut light, mut t)) = sun.single_mut() {
         aim_sun(&mut light, &mut t, light_dir, to_bevy.rotation * Vec3::Y, PI * unit * sky.sun_scale() * sun_mod, moon_mult);

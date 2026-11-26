@@ -335,7 +335,7 @@ mod shared_table_tests {
     /// #2995's night sky detail row; #3013's distant lights row; #3322's terrain parallax row;
     /// #2991's volumetric clouds row; #3348's HDR output row; #3783's occlusion culling row;
     /// #3032's volumetric light row and its strength; #3843's localized armor DT/DR row; the
-    /// physical lighting row), by the group it registers with.
+    /// physical lighting row; #4690's tonemapping preset row), by the group it registers with.
     pub(super) const KNOWN: &[(&str, &str)] = &[
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
@@ -475,6 +475,7 @@ mod shared_table_tests {
         ("aerial-perspective", "Graphics"),
         ("night-sky-detail", "Graphics"),
         ("physical-pbr", "Graphics"),
+        ("tonemap-preset", "Graphics"),
         ("distant-lights", "Graphics"),
         ("volumetric-light", "Graphics"),
         ("volumetric-light-strength", "Graphics"),

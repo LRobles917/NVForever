@@ -2697,22 +2697,6 @@ pub fn interior_clip(sky: Res<SkyState>, mut cam: Query<&mut Projection, With<Fl
 /// Interior fog's far distance with the No Interior Fog tweak: farther than any room
 /// [design: docs/design/tweaks.md].
 const NO_FOG_FAR: f32 = 1_000_000.0;
-const PHYSICAL_INTERIOR_FOG_MIN_NEAR: f32 = 900.0;
-const PHYSICAL_INTERIOR_FOG_COLOR_SCALE: f32 = 0.35;
-
-/// Far-only interior fog parameters under Physical lighting so small rooms stay crisp
-/// while large vaults/caverns still receive soft distant air depth before clip.
-pub(crate) fn physical_interior_fog(l: fnv_world::lighting::CellLighting) -> (f32, f32, f32) {
-    if l.fog_clip_dist > 0.0 {
-        let near = l.fog_near.max(0.0).max((l.fog_clip_dist * 0.45).min(PHYSICAL_INTERIOR_FOG_MIN_NEAR));
-        let far = l.fog_far.max(l.fog_clip_dist).max(near + 1200.0);
-        (near, far, PHYSICAL_INTERIOR_FOG_COLOR_SCALE)
-    } else {
-        let near = l.fog_near.max(PHYSICAL_INTERIOR_FOG_MIN_NEAR);
-        let far = (l.fog_far * 2.5).max(near + 2500.0);
-        (near, far, PHYSICAL_INTERIOR_FOG_COLOR_SCALE)
-    }
-}
 
 /// The sky's colours now, for GetCurrentSkyColor (`fnv_game::nvse_jg9`); populated in
 /// interiors as well as exteriors [observed: `w6_t1_09_jg_sky_color_interior`,
@@ -2736,28 +2720,22 @@ pub(crate) fn interior_fog_active(l: fnv_world::lighting::CellLighting) -> bool 
 /// the same composition on exit, without waiting for the next weather refresh.
 pub(crate) fn apply_cell_fog(sky: &SkyState, fog: &mut DistanceFog, emissive_mod: f32, no_interior_fog: bool) {
     if let Some(l) = sky.interior {
-        let mut rgb = l.fog_color.map(fnv_world::sky::srgb_to_linear);
-        let physical = nvf_assets::authored::physical_pbr();
-        if physical && interior_fog_active(l) {
-            let (near, far, color_scale) = physical_interior_fog(l);
-            rgb = rgb.map(|c| c * color_scale);
-            fog.color = to_color(rgb);
-            let near = if no_interior_fog { l.fog_near.max(0.0) } else { near };
-            let far = if no_interior_fog { NO_FOG_FAR } else { far };
-            fog.falloff = crate::fog::falloff(near, far, l.fog_power, false, 1.0);
-        } else if interior_fog_active(l) {
-            fog.color = to_color(rgb);
+        let color = to_color(l.fog_color.map(fnv_world::sky::srgb_to_linear));
+        if interior_fog_active(l) {
+            fog.color = color;
             let far = if no_interior_fog { NO_FOG_FAR } else { l.fog_far };
             fog.falloff = crate::fog::falloff(l.fog_near.max(0.0), far, l.fog_power, false, 1.0);
         } else {
             // Unset interior fog range (e.g. 0..0): disable fog via alpha 0, matching
             // exterior weathers (`Weather::fog_at`), instead of clamping far to near + 1.
-            fog.color = to_color(rgb).with_alpha(0.0);
+            fog.color = color.with_alpha(0.0);
             fog.falloff = crate::fog::falloff(0.0, NO_FOG_FAR, l.fog_power, false, 1.0);
         }
     } else {
         let range = sky.fog_override.map(|(n, f)| (n, f, 1.0)).or_else(|| sky.fog());
         let (near, far, strength) = range.unwrap_or((0.0, 0.0, 0.0));
+        // Under Physical lighting the game's fog fades far land into the physical dome's
+        // horizon colour, the sky behind it (graphics-enhanced.md §3.25).
         let fog_rgb = if nvf_assets::authored::physical_pbr() {
             sky.physical_horizon_color()
         } else {
@@ -2821,8 +2799,7 @@ pub fn update_sky(
         if !changed {
             return;
         }
-        let fog_scale = if nvf_assets::authored::physical_pbr() { PHYSICAL_INTERIOR_FOG_COLOR_SCALE } else { 1.0 };
-        let c = |v: [u8; 3]| to_color(v.map(|b| fnv_world::sky::srgb_to_linear(b) * fog_scale));
+        let c = |v: [u8; 3]| to_color(v.map(fnv_world::sky::srgb_to_linear));
         if let Ok((_, _, mut t)) = dome.single_mut() {
             t.scale = Vec3::ZERO;
         }
@@ -4221,39 +4198,5 @@ mod tests {
         apply_cell_fog(&sky, &mut fog, 1.0, true);
         assert_eq!(fog.color.alpha(), 1.0);
         assert_fog_falloff(&fog.falloff, &crate::fog::falloff(27.0, NO_FOG_FAR, 1.7, false, 1.0));
-    }
-
-    #[test]
-    fn physical_interior_fog_keeps_small_rooms_clear_and_preserves_clipped_depth() {
-        let small = fnv_world::lighting::CellLighting {
-            fog_near: 0.0,
-            fog_far: 2200.0,
-            fog_clip_dist: 0.0,
-            ..Default::default()
-        };
-        let (near_s, far_s, scale_s) = physical_interior_fog(small);
-        assert!(near_s >= PHYSICAL_INTERIOR_FOG_MIN_NEAR, "small unclipped room starts clear: {near_s}");
-        assert!((far_s - 5500.0).abs() < 1e-3, "far stretched 2.5x: {far_s}");
-        assert_eq!(scale_s, PHYSICAL_INTERIOR_FOG_COLOR_SCALE);
-
-        let cavern = fnv_world::lighting::CellLighting {
-            fog_near: 64.0,
-            fog_far: 3300.0,
-            fog_clip_dist: 4000.0,
-            ..Default::default()
-        };
-        let (near_c, far_c, _) = physical_interior_fog(cavern);
-        assert_eq!(near_c, 900.0);
-        assert!(far_c >= 4000.0, "clipped interior reaches clip distance: {far_c}");
-
-        let tight_clip = fnv_world::lighting::CellLighting {
-            fog_near: 0.0,
-            fog_far: 1500.0,
-            fog_clip_dist: 1600.0,
-            ..Default::default()
-        };
-        let (near_t, far_t, _) = physical_interior_fog(tight_clip);
-        assert!((near_t - 720.0).abs() < 1e-3, "0.45 * clip_dist below min_near cap: {near_t}");
-        assert!(far_t >= near_t + 1200.0);
     }
 }

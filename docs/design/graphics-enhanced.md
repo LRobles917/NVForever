@@ -4333,9 +4333,10 @@ The display-value lighting sum (world.md §8) is replaced by linear lighting:
   the sun's light (`sky.rs`, `sky.wesl`) [documented: Bruneton and Neyret 2008, "Precomputed
   Atmospheric Scattering"; Hillaire 2020, "A Scalable and Production Ready Sky and
   Atmosphere Rendering Technique", for the model and the Earth and atmosphere radii].
-- *Fog*: optical depth linear in distance (Beer-Lambert), Rayleigh and Mie in-scatter with
-  a Henyey-Greenstein phase for the sun's side (`fog/shader.rs` `PHYSICAL_FOG`);
-  interiors keep their fog from 900 units out so small rooms stay clear.
+- *Fog*: the game's fog (fog.rs), with the Desert haze and Aerial perspective rows over it
+  as in the display-value look, and with Volumetric light its air [design: agreed with the
+  volumetric work, 2026-11-26]; outdoors its colour is the physical dome's horizon
+  (sky.rs `physical_horizon_color`), so far land fades into the sky behind it.
 - *Exposure and tone*: the world view keeps Bevy's Tony McMapface curve in place of the
   display-value clip (lights.rs `physical_tony`), the curve the volumetric clouds and the
   air are matched to [design: agreed with the volumetric work, 2026-11-26; a choice of
@@ -4370,8 +4371,6 @@ The display-value lighting sum (world.md §8) is replaced by linear lighting:
 | `ATMO_HR`, `ATMO_HM` | 8.0, 1.0 km | [design] Rayleigh's usual 8 km scale height [documented: Bruneton and Neyret 2008]; Mie lowered from their 1.2 km for desert air |
 | `BETA_R`, `BETA_O` | (4.60, 13.00, 35.50)·10⁻³, (1.10, 2.35, 0.06)·10⁻³ per km | [design] tuned from the published sea-level coefficients for the desert's colour |
 | `ATMO_SUN_IRRADIANCE` | 8.2 | [design] |
-| `PHYSICAL_INTERIOR_FOG_MIN_NEAR`, `_COLOR_SCALE` (sky.rs) | 900 units, 0.35 | [design] |
-| fog shader values (`PHYSICAL_FOG`) | Rayleigh τ (0.052, 0.122, 0.300) per 70,000 units, Mie g 0.72, thick-weather τ 2.2 | [design] |
 | `OUTDOOR_IBL_SCALE`, `INDOOR_IBL_SCALE` (physical_ibl.rs) | 0.62, 0.45 | [design] |
 | cube map sizes (physical_ibl.rs) | 16 (diffuse), 32 with 5 mips (specular), 16-step sky table | [design] cost |
 | `PHYSICAL_LOW_REF`, `PHYSICAL_HIGH_REF` (eye_adapt.rs) | −6.0, −1.2 EV | [design] |

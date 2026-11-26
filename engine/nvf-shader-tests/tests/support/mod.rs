@@ -12,9 +12,6 @@ use std::{collections::HashMap, fs, path::Path, sync::Arc};
 #[path = "../../../nvforever/src/lights/display_shader.rs"]
 pub mod production_display_shader;
 
-#[path = "../../../nvforever/src/fog/shader.rs"]
-mod production_fog_shader;
-
 #[path = "../../../nvforever/src/ssao_lighting/hook.rs"]
 pub mod production_ambient_occlusion_hook;
 
@@ -151,10 +148,6 @@ impl Compiler {
                 if self.physical_pbr && name == "bevy_pbr/render/pbr_lighting.wesl" {
                     source = production_display_shader::lighting_patched(&source, true)
                         .expect("production physical lighting patch anchors match the selected shader");
-                }
-                if self.physical_pbr && name == "bevy_pbr/render/fog.wesl" {
-                    source = production_fog_shader::fog_patched(&source, true)
-                        .expect("production physical fog patch anchors match the selected shader");
                 }
                 if name == "bevy_pbr/render/pbr_functions.wesl" {
                     if self.physical_pbr {

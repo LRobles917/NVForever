@@ -37173,15 +37173,16 @@ forbid = [
 ]
 [[scenario]]
 name = "physical-lighting"
-source = "[design, #3827 part 5] docs/design/graphics-enhanced.md §3.25 (engine/nvforever/src/lights.rs `physical_patched`, physical_ibl.rs, fog/shader.rs, eye_adapt.rs): with --graphics-only physical-pbr at Goodsprings at noon, the run's switch is on, the physical light loop is installed and the sky's image-based light is made, without a pipeline or rendering error. Whether the look is right is checked in pictures by hand"
+source = "[design, #3827 part 5] docs/design/graphics-enhanced.md §3.25 (engine/nvforever/src/lights.rs `physical_patched`, physical_ibl.rs, fog.rs, eye_adapt.rs): with --graphics-only physical-pbr at Goodsprings at noon, the run's switch is on, the physical light loop is installed and the sky's image-based light is made, without a pipeline or rendering error. Whether the look is right is checked in pictures by hand"
 areas = ["renderer", "graphics"]
-paths = ["engine/nvforever/src/physical_ibl.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/nvforever/src/fog.rs", "engine/nvforever/src/fog/shader.rs", "engine/nvforever/src/eye_adapt.rs"]
+paths = ["engine/nvforever/src/physical_ibl.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/nvforever/src/fog.rs", "engine/nvforever/src/eye_adapt.rs"]
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "physical-pbr"]
 run_seconds = 20
 expect = [
   { text = "physical PBR: on", count = 1, label = "the run's switch is on" },
   { text = "lights: physical PBR linear lighting installed", label = "the physical light loop is in place" },
   { text = "lights: physical PBR, the main view keeps Tony McMapface", count = 1, label = "the main view tonemaps with Tony McMapface, not the clip" },
+  { text = "fog: the game's fog curve installed", label = "the game's fog, not a fog of Physical lighting's own" },
   { re = 'graphics: .*physical PBR lighting', label = "the graphics line names it" },
 ]
 forbid = [

@@ -37181,6 +37181,7 @@ run_seconds = 20
 expect = [
   { text = "physical PBR: on", count = 1, label = "the run's switch is on" },
   { text = "lights: physical PBR linear lighting installed", label = "the physical light loop is in place" },
+  { text = "lights: physical PBR, the main view keeps Tony McMapface", count = 1, label = "the main view tonemaps with Tony McMapface, not the clip" },
   { re = 'graphics: .*physical PBR lighting', label = "the graphics line names it" },
 ]
 forbid = [

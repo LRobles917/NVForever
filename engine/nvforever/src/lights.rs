@@ -82,13 +82,12 @@ pub fn display_clip() -> bool {
     CLIP_INSTALLED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Whether the main world view uses Bevy's `Tonemapping::AgX` + Punchy look
-/// (Physical lighting; in a build with the developer aids `NVF_TONEMAP=clip` or `tony` keeps
-/// the display-value curves, for comparing).
-pub fn physical_agx() -> bool {
+/// Whether the main world view keeps Bevy's Tony McMapface curve under Physical lighting:
+/// its light is linear and runs above 1, which the display-value clip would cut off. The
+/// volumetric clouds and the air tonemap with the same curve (graphics-enhanced.md §3.25);
+/// a choice of tonemapper for every view is #4690's.
+pub fn physical_tony() -> bool {
     nvf_assets::authored::physical_pbr()
-        && !crate::dev_aids::var("NVF_TONEMAP")
-            .is_some_and(|v| v.eq_ignore_ascii_case("clip") || v.eq_ignore_ascii_case("tony"))
 }
 
 pub struct LightsPlugin;
@@ -146,8 +145,8 @@ fn patch_clip(mut state: ResMut<TonemapShader>, mut shaders: ResMut<Assets<Shade
         info!("lights: NVF_TONEMAP=tony, the main view keeps Tony McMapface");
         return;
     }
-    if physical_agx() {
-        info!("lights: physical PBR, the main view uses AgX");
+    if physical_tony() {
+        info!("lights: physical PBR, the main view keeps Tony McMapface");
         return;
     }
     let bevy::shader::Source::Wesl(source) = &shader.source else {

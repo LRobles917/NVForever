@@ -4336,15 +4336,14 @@ The display-value lighting sum (world.md §8) is replaced by linear lighting:
 - *Fog*: optical depth linear in distance (Beer-Lambert), Rayleigh and Mie in-scatter with
   a Henyey-Greenstein phase for the sun's side (`fog/shader.rs` `PHYSICAL_FOG`);
   interiors keep their fog from 900 units out so small rooms stay clear.
-- *Exposure and tone*: the world view tonemaps with Bevy's AgX in place of the
-  display-value clip (main.rs, lights.rs `physical_agx`), and the grade adds a Punchy look
-  on top (imagespace.wesl) [design: after Troy Sobotka's AgX and its Punchy look]; outdoors
-  the weather's own grade (tint, contrast, brightness) is set aside so it is not laid over
-  linear light twice, while the game's image-space modifiers still apply (imagespace.rs
-  `effective_grade_base`). In a build with the developer aids `NVF_TONEMAP=clip` or `tony`
-  keeps the other curves, for comparing. The eye adaptation meters both ways (lifting dark
-  scenes and darkening bright ones) with its own limits (`eye_adapt.rs`), and runs with the
-  row even when Glow is off. The view is HDR under the row.
+- *Exposure and tone*: the world view keeps Bevy's Tony McMapface curve in place of the
+  display-value clip (lights.rs `physical_tony`), the curve the volumetric clouds and the
+  air are matched to [design: agreed with the volumetric work, 2026-11-26; a choice of
+  tonemapper and editable presets for every view is #4690]; outdoors the weather's own grade
+  (tint, contrast, brightness) is set aside so it is not laid over linear light twice, while
+  the game's image-space modifiers still apply (imagespace.rs `effective_grade_base`). The
+  eye adaptation meters both ways (lifting dark scenes and darkening bright ones) with its
+  own limits (`eye_adapt.rs`), and runs with the row even when Glow is off. The view is HDR under the row.
 - *Bloom*: with Glow on, the bloom takes the HDR picture's linear light (post.rs
   `new_with_hdr_glow`).
 - *Materials* (nif_material.wesl and .rs `NVF_PHYSICAL_PBR`, terrain.wesl): the shade light
@@ -4379,7 +4378,6 @@ The display-value lighting sum (world.md §8) is replaced by linear lighting:
 | `PHYSICAL_LOW_REF`, `PHYSICAL_HIGH_REF` (eye_adapt.rs) | −6.0, −1.2 EV | [design] |
 | `PHYSICAL_LIFT_SLOPE`, `PHYSICAL_MAX_LIFT`, `PHYSICAL_DARKEN_SLOPE`, `PHYSICAL_MAX_DARKEN` | 0.68, 2.6, 0.45, 1.4 | [design] |
 | `PHYSICAL_METER_FILTER` | 10-98 % | [design] the display-value meter's 10-100 % (eye_adapt.rs `METER_FILTER`) less the brightest 2 % |
-| the Punchy look (imagespace.wesl) | gain 1.05, power 1.22, saturation 1.36 | [design] |
 | `RAY_MESH_PHYSICAL_BOOST` (emittance.rs) | 1.85 | [design] |
 
 - **Cost**: not measured yet (to be measured as in §5, the Goodsprings and Prospector

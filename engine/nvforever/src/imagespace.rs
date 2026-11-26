@@ -630,11 +630,12 @@ pub(crate) fn black_over(fade: [f32; 4], f: f32) -> [f32; 4] {
     [fade[0] * keep, fade[1] * keep, fade[2] * keep, covered]
 }
 
-/// Base cinematic grade used before applying active `IMAD` modifiers: under physical
-/// AgX outdoors, neutralize FNV's sRGB Mojave tint/contrast/brightness wash while
-/// keeping HDR values and letting gameplay modifiers (`effect`) compose cleanly.
-fn effective_grade_base(base: fnv_world::imagespace::Cinematic, physical_agx: bool, indoors: bool) -> fnv_world::imagespace::Cinematic {
-    if physical_agx && !indoors {
+/// Base cinematic grade used before applying active `IMAD` modifiers: under Physical
+/// lighting outdoors, set aside the weather's tint, contrast and brightness (made for the
+/// display values, not linear light) while keeping its HDR values and letting gameplay
+/// modifiers (`effect`) compose cleanly.
+fn effective_grade_base(base: fnv_world::imagespace::Cinematic, physical: bool, indoors: bool) -> fnv_world::imagespace::Cinematic {
+    if physical && !indoors {
         fnv_world::imagespace::Cinematic { hdr: base.hdr, ..fnv_world::imagespace::Cinematic::default() }
     } else {
         base
@@ -747,8 +748,7 @@ pub(crate) fn update_grade(
     let base = sky.cinematic();
     let c_hdr = graded(&base, &effect);
     mods.hdr = Some((base.hdr, c_hdr.hdr));
-    let physical_agx = crate::lights::physical_agx();
-    let grade_base = effective_grade_base(base, physical_agx, sky.interior.is_some());
+    let grade_base = effective_grade_base(base, nvf_assets::authored::physical_pbr(), sky.interior.is_some());
     let c = graded(&grade_base, &effect);
     if let Some(w) = &world {
         modifier_sounds(&mut mods, w, &forms, sounds);
@@ -781,7 +781,7 @@ pub(crate) fn update_grade(
         // the grade).
         vats_tint: vats_tint(nvf_play::interface::AMBER_RGB).with_w(if vats.as_deref().is_some_and(|v| v.style() == nvf_play::vats_classic::VatsStyle::Classic) { nvf_play::vats_classic::DARKEN } else { 0.0 }),
         dof: Vec4::new(dof.strength, dof.distance, dof.range, focus),
-        dof_mode: Vec4::new(if dof.use_target { 1.0 } else { 0.0 }, f32::from(dof.flags), near.unwrap_or(1.0), if physical_agx { 1.0 } else { 0.0 }),
+        dof_mode: Vec4::new(if dof.use_target { 1.0 } else { 0.0 }, f32::from(dof.flags), near.unwrap_or(1.0), 0.0),
         motion: Vec4::new(motion, near.map_or(0.0, |n| n / MOTION_SHARP), MOTION_MAX_REACH, 0.0),
         reproject: Mat4::IDENTITY,
         photo: Vec4::from_array(photo.as_deref().map_or([0.0; 4], |p| p.finish())),

@@ -4280,13 +4280,15 @@ and names its functions `vc_m2_*`); a run draws with it and nothing else.
 
 ### 3.25 Physical lighting (`physical-pbr`; off in every preset, #3827)
 
-**Carried over** from #3828's branch (its split, part 5, #4199): the light loop, lamps, fog, the sky and its image-based light, exposure and tone, bloom and the materials below. The rest of that branch's physical work comes in its own pull requests, each stacked on this one: the ambient occlusion inside the physical light loop (part 2, #4287; until then the occlusion stays on the picture under this row, logged once), the canopy shading (part 3b, #4266), the window rays' room light (part 7, #4285), and skin, eyes and hair (part 6, #4262, §3.26). Not measured or pictured yet.
+**Carried over** from #3828's branch (its split, part 5, #4199): the light loop, lamps, fog, the sky and its image-based light, exposure and tone, bloom and the materials below. The rest of that branch's physical work comes in its own pull requests, each stacked on this one: the ambient occlusion inside the physical light loop (part 2, #4287; until then the occlusion stays on the picture under this row, logged once), the canopy shading (part 3b, #4266), and skin, eyes and hair (part 6, #4262, §3.26). Not measured or pictured yet.
 
-**Not with the volumetric rows yet** [design: the user's decision 2026-11-25, until they and
-spooknik agree how the two work together]: under Physical lighting, Volumetric clouds and
-Volumetric light (and its strength) are greyed (settings_layout `NEEDS_CHOICE`) and do not
-run (graphics.rs `volumetric_clouds_run`, `volumetric_light_run`; their saved values are
-kept). One look or the other.
+**With the volumetric rows** [design: agreed with the volumetric work, 2026-11-26]: Volumetric
+clouds and Volumetric light run under Physical lighting. The clouds are lit as the physical
+dome they lie on is drawn, by the surfaces' sun colour and the physical sky's colours, in
+linear light, and go to the tonemapper without its inverse (sky.rs `physical_cloud_light`,
+volumetric_clouds.rs `compose_uniform`). Volumetric light's air composite still reads the
+picture as display values (medium_air_compose.wesl); how it meets linear light is open with
+its author.
 
 **With authored reflections** (#2981; a material pack and its Reflections row on) [design:
 spooknik's review of #3828, which switched them off]: Bevy gives a view one environment map,

@@ -37193,20 +37193,22 @@ forbid = [
 ]
 note = "Written 2026-11-25 without a run (the split of #3828; smoke runs to follow)."
 [[scenario]]
-name = "physical-lighting-no-volumetric"
-source = "[design, the user's decision 2026-11-25] docs/design/graphics-enhanced.md §3.25 (engine/nvforever/src/graphics.rs `volumetric_clouds_run`, `volumetric_light_run`): started with --graphics-only physical-pbr,volumetric-clouds-high,volumetric-light at Goodsprings at 17:30, the volumetric rows do not run under Physical lighting: the graphics line names neither, and the light in the air is never wanted"
+name = "physical-lighting-volumetric"
+source = "[design, agreed with the volumetric work 2026-11-26] docs/design/graphics-enhanced.md §3.25 (engine/nvforever/src/sky.rs `physical_cloud_light`, volumetric_clouds.rs `compose_uniform`): started with --graphics-only physical-pbr,volumetric-clouds-high,volumetric-light at Goodsprings at 17:30, the volumetric rows run under Physical lighting: the graphics line names both, the light in the air is wanted, and nothing fails to compile"
 areas = ["renderer", "graphics"]
-paths = ["engine/nvforever/src/graphics.rs", "engine/nvforever/src/volumetric_clouds.rs", "engine/nvforever/src/medium_air_demand.rs", "crates/nvf-settings-layout/src/lib.rs"]
+paths = ["engine/nvforever/src/graphics.rs", "engine/nvforever/src/volumetric_clouds.rs", "engine/nvforever/src/volumetric_clouds.wesl", "engine/nvforever/src/sky.rs", "engine/nvforever/src/medium_air_demand.rs", "engine/nvf-assets/src/tone_input.wesl", "crates/nvf-settings-layout/src/lib.rs"]
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "17.5", "--graphics-only", "physical-pbr,volumetric-clouds-high,volumetric-light"]
 run_seconds = 20
 expect = [
   { text = "physical PBR: on", count = 1, label = "the run's switch is on" },
   { re = 'graphics: .*physical PBR lighting', label = "the graphics line names Physical lighting" },
+  { re = 'graphics: .*volumetric clouds', label = "the clouds run under Physical lighting" },
+  { re = 'graphics: .*volumetric light', label = "the light in the air runs under Physical lighting" },
+  { text = "volumetric medium: light in the air wanted (the Volumetric light row)", label = "the row asks for the light" },
 ]
 forbid = [
-  { re = 'graphics: .*volumetric clouds', label = "the clouds are on under Physical lighting" },
-  { re = 'graphics: .*volumetric light', label = "the light in the air is on under Physical lighting" },
-  { text = "volumetric medium: light in the air wanted", label = "the light in the air was wanted" },
   { text = "Caught rendering error", label = "a rendering (validation) error" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (the clouds' composite with the shared tonemapper input)" },
+  { text = "DeviceLost", label = "the GPU device was lost" },
 ]
-note = "Written 2026-11-25 without a run (the split of #3828; smoke runs to follow)."
+note = "Written 2026-11-26 without a run (the volumetric rows under Physical lighting); replaces physical-lighting-no-volumetric."

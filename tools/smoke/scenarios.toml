@@ -37191,7 +37191,7 @@ forbid = [
   { text = "not as expected (Bevy changed?)", label = "a physical patch's anchors missing" },
   { text = "DeviceLost", label = "the GPU device was lost" },
 ]
-note = "Written 2026-11-25 without a run (the split of #3828; smoke runs to follow)."
+note = "Written 2026-11-25 (the split of #3828); first run 2026-11-26 on vanilla data: PASS."
 [[scenario]]
 name = "physical-lighting-volumetric"
 source = "[design, agreed with the volumetric work 2026-11-26] docs/design/graphics-enhanced.md §3.25 (engine/nvforever/src/sky.rs `physical_cloud_light`, volumetric_clouds.rs `compose_uniform`): started with --graphics-only physical-pbr,volumetric-clouds-high,volumetric-light at Goodsprings at 17:30, the volumetric rows run under Physical lighting: the graphics line names both, the light in the air is wanted, and nothing fails to compile"
@@ -37211,4 +37211,4 @@ forbid = [
   { text = "failed and will not be tried again", label = "a pipeline that failed for good (the clouds' composite with the shared tonemapper input)" },
   { text = "DeviceLost", label = "the GPU device was lost" },
 ]
-note = "Written 2026-11-26 without a run (the volumetric rows under Physical lighting); replaces physical-lighting-no-volumetric."
+note = "Written 2026-11-26 (the volumetric rows under Physical lighting), replacing physical-lighting-no-volumetric; first run 2026-11-26 on vanilla data: PASS."

@@ -82,6 +82,32 @@ pub fn display_clip() -> bool {
     CLIP_INSTALLED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The main view's tonemapper curve, which everything that writes display values into the
+/// HDR picture (the sky, the volumetric clouds) maps them for (nvf_assets tone_input.wesl
+/// `to_tonemap_input`). One place to ask, so a choice of curves (#4690) changes it here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToneCurve {
+    /// Display values clipped ([`GAME_CLIP`], [`GAME_HDR`]): the value is the input.
+    Clipped,
+    /// Bevy's Tony McMapface: Physical lighting ([`physical_tony`]) and `NVF_TONEMAP=tony`.
+    TonyMcMapface,
+}
+
+impl ToneCurve {
+    /// The code the shaders take (tone_input.wesl `TONE_CLIPPED`).
+    pub fn code(self) -> f32 {
+        match self {
+            ToneCurve::Clipped => 1.0,
+            ToneCurve::TonyMcMapface => 0.0,
+        }
+    }
+}
+
+/// The main view's curve this frame.
+pub fn tone_curve() -> ToneCurve {
+    if display_clip() { ToneCurve::Clipped } else { ToneCurve::TonyMcMapface }
+}
+
 /// Whether the main world view keeps Bevy's Tony McMapface curve under Physical lighting:
 /// its light is linear and runs above 1, which the display-value clip would cut off. The
 /// volumetric clouds and the air tonemap with the same curve (graphics-enhanced.md §3.25);

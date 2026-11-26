@@ -2030,9 +2030,9 @@ pub struct CloudComposeUniform {
 }
 
 /// The composition of this frame's display mode, held or not.
-pub fn compose_uniform(display_clip: bool, hold: bool) -> CloudComposeUniform {
+pub fn compose_uniform(curve: crate::lights::ToneCurve, hold: bool) -> CloudComposeUniform {
     let flag = |b: bool| if b { 1.0 } else { 0.0 };
-    CloudComposeUniform { flags: Vec4::new(flag(display_clip), flag(hold), 0.0, 0.0) }
+    CloudComposeUniform { flags: Vec4::new(curve.code(), flag(hold), 0.0, 0.0) }
 }
 
 /// The volume's material (volumetric_clouds.wesl): the composition's uniform and the medium's
@@ -2725,7 +2725,7 @@ fn show_volume(
     let far_changed = materials.get(&material.0).is_some_and(|m| m.far != medium.image);
     let bound = request.trace.is_some() && medium.image.is_some() && !far_changed;
     let drawing = bound && medium.ready;
-    let compose = compose_uniform(crate::lights::display_clip(), !drawing);
+    let compose = compose_uniform(crate::lights::tone_curve(), !drawing);
     let compose_changed = materials.get(&material.0).is_some_and(|m| m.params.flags.x != compose.flags.x || m.params.flags.y != compose.flags.y);
     if far_changed || compose_changed {
         if let Some(mut m) = materials.get_mut(&material.0) {
@@ -4577,7 +4577,8 @@ pub(crate) mod tests {
     }
 
     /// volumetric_clouds.wesl with its imports replaced by stand-ins (the fields it reads of
-    /// Bevy's types) and the medium's upsample module pasted in, as plain WGSL. Only a run of
+    /// Bevy's types) and the medium's upsample and nvf_assets' tone input modules pasted in, as
+    /// plain WGSL. Only a run of
     /// the game proves the composed shader (the WESL imports, the material bind group).
     #[test]
     fn the_material_shader_is_valid_wgsl() {
@@ -4596,7 +4597,11 @@ pub(crate) mod tests {
         }
         let body = body.replace("constants::MATERIAL_BIND_GROUP", "2");
         let stand_ins = "struct VertexOutput {\n    @builtin(position) position: vec4<f32>,\n    @location(0) world_position: vec4<f32>,\n};\nstruct View { unjittered_clip_from_world: mat4x4<f32>, world_position: vec3<f32>, };\n@group(0) @binding(0) var<uniform> view: View;\n";
-        let source = format!("{stand_ins}{}\n{body}", include_str!("medium_upsample.wesl").replace("\r\n", "\n"));
+        let source = format!(
+            "{stand_ins}{}\n{}\n{body}",
+            include_str!("medium_upsample.wesl").replace("\r\n", "\n"),
+            include_str!("../../nvf-assets/src/tone_input.wesl").replace("\r\n", "\n")
+        );
         let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap_or_else(|e| panic!("{e:?}"));
         assert!(module.entry_points.iter().any(|e| e.name == "fragment"));
@@ -4609,23 +4614,21 @@ pub(crate) mod tests {
         }
         assert!(shader.contains("view.unjittered_clip_from_world"), "the buffer is read where the unjittered projection puts the fragment");
         assert_eq!(CloudComposeUniform::min_size().get(), 16);
-        assert_eq!(compose_uniform(true, false).flags.x, 1.0);
-        assert_eq!(compose_uniform(false, true).flags.y, 1.0);
-        assert_eq!(compose_uniform(false, false), CloudComposeUniform::default());
+        use crate::lights::ToneCurve;
+        assert_eq!(compose_uniform(ToneCurve::Clipped, false).flags.x, 1.0);
+        assert_eq!(compose_uniform(ToneCurve::TonyMcMapface, true).flags.y, 1.0);
+        assert_eq!(compose_uniform(ToneCurve::TonyMcMapface, false), CloudComposeUniform::default());
         assert!(shader.contains("if compose.flags.y > 0.5 {\n        return vec4<f32>(0.0);"), "held: nothing added (premultiplied zero)");
     }
 
-    /// The Tony McMapface tables are sky.wesl's, so the volume maps its colour as the sky does.
+    /// The volume maps its colour through the sky's own tonemapper input (one table, in
+    /// nvf_assets tone_input.wesl), so it lands as the sky does.
     #[test]
     fn the_tonemapper_inverse_is_the_skys() {
-        let table = |src: &str, name: &str| -> String {
-            let start = src.find(&format!("var<private> {name}")).unwrap_or_else(|| panic!("{name}"));
-            src[start..start + src[start..].find(';').unwrap()].to_string()
-        };
         let (sky, ours) = (include_str!("sky.wesl"), include_str!("volumetric_clouds.wesl"));
-        for name in ["TONY_IN", "TONY_OUT"] {
-            assert_eq!(table(sky, name), table(ours, name), "{name}");
-        }
+        assert!(sky.contains("import nvf_assets::tone_input::to_tonemap_input;"));
+        assert!(ours.contains("import nvf_assets::tone_input::to_tonemap_input_each;"));
+        assert!(!sky.contains("var<private> TONY_IN") && !ours.contains("var<private> TONY_IN"), "no copy of the table");
     }
 
     /// The uniform's field order is the shader's struct's.

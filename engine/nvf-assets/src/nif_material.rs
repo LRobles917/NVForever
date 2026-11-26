@@ -168,6 +168,8 @@ const COVERAGE_SHADER: Handle<Shader> = uuid_handle!("5a1f8e3c-0d72-4b96-8c4e-e1
 
 /// first_person_depth.wesl.
 const FIRST_PERSON_DEPTH_SHADER: Handle<Shader> = uuid_handle!("9e4a7c12-58d3-4f6b-a0e1-2c7b5d8f3a64");
+/// tone_input.wesl: the tonemapper's input, shared with nvforever's sky and clouds.
+const TONE_INPUT_SHADER: Handle<Shader> = uuid_handle!("3c8f1e5a-7b2d-4a96-9e04-d61b8a2f5c37");
 
 /// Make a depth-only prepass pipeline of a crossfading mesh dither as the main pass does
 /// (module docs). Call from `MaterialExtension::specialize` of materials whose meshes
@@ -1216,6 +1218,7 @@ impl Plugin for NifMaterialPlugin {
         load_internal_asset!(app, NIF_PREPASS_SHADER, "nif_prepass.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/nif_prepass.wesl"));
         load_internal_asset!(app, COVERAGE_SHADER, "coverage.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/coverage.wesl"));
         load_internal_asset!(app, FIRST_PERSON_DEPTH_SHADER, "first_person_depth.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/first_person_depth.wesl"));
+        load_internal_asset!(app, TONE_INPUT_SHADER, "tone_input.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/tone_input.wesl"));
         // Landscape anti-tiling (terrain_sampling.rs), imported by nvforever's terrain.wesl
         // and by this crate's nif_material.wesl only with TERRAIN_ANTI_TILING.
         load_internal_asset!(app, crate::terrain_sampling::SAMPLING_SHADER, "terrain_sampling.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/terrain_sampling.wesl"));

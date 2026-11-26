@@ -107,9 +107,16 @@ impl Compiler {
         if ambient_occlusion_hook || physical_pbr {
             packages.push(("nvf_assets", "nvf-assets/src"));
         }
+        let all_assets = packages.iter().any(|(package, _)| *package == "nvf_assets");
         for (package, directory) in packages {
             let root = engine.join(directory);
             compiler.register_directory(package, &root, &root, remove_invariance);
+        }
+        // The shared tonemapper input, which nvforever's sky and clouds import whatever else
+        // of nvf_assets a test leaves out.
+        if !all_assets {
+            let path = engine.join("nvf-assets/src/tone_input.wesl");
+            compiler.register("nvf_assets/tone_input.wesl", fs::read_to_string(path).expect("tone_input.wesl"));
         }
         compiler
     }

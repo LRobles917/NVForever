@@ -1562,9 +1562,9 @@ impl SkyState {
         };
         SkyLight {
             params: Vec4::new(self.sky_scale(), 0.0, 1.0, 0.0),
-            // w: 1 when the main view shows display values clipped (lights.rs
-            // `display_clip`), so the sky leaves out its inverse of Tony McMapface.
-            glow: Vec3::ZERO.extend(if crate::lights::display_clip() { 1.0 } else { 0.0 }),
+            // w: the main view's tonemapper curve (lights.rs `ToneCurve::code`, 1 display
+            // values clipped), which the sky maps its display values for (tone_input.wesl).
+            glow: Vec3::ZERO.extend(crate::lights::tone_curve().code()),
             // w: the physical sky's clearness (sky.wesl, physical lighting; 0 otherwise).
             sun_dir: dir.extend(clearness),
             sun: (sun_col * SUN_STRENGTH).extend(half_tan(fair_value(SUN_SIZE_DEG, fair_size))),

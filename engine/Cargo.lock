@@ -4813,6 +4813,7 @@ dependencies = [
  "sysinfo",
  "texpresso",
  "tiny-skia",
+ "toml",
  "tracy-client",
  "ureq",
  "uuid",

@@ -13,7 +13,8 @@ import nvforever::medium_upsample::{medium_screen_uv, medium_far};
 import nvf_assets::tone_input::to_tonemap_input_each;
 
 // volumetric_clouds.rs CloudComposeUniform: x the view's tonemapper curve (lights.rs
-// `ToneCurve::code`: 1 display values clipped, no Tony inverse); y 1 to hold (nothing added: the proxy is drawn so that its pipeline is
+// `ToneCurve::code`: 1 the colour goes in as it is, for display values clipped or, under
+// Physical lighting, linear light; 0 the Tony inverse); y 1 to hold (nothing added: the proxy is drawn so that its pipeline is
 // made, while the flat layers still show); z, w unused.
 struct CloudCompose {
     flags: vec4<f32>,

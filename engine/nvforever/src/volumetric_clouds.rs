@@ -2029,10 +2029,14 @@ pub struct CloudComposeUniform {
     pub flags: Vec4,
 }
 
-/// The composition of this frame's display mode, held or not.
-pub fn compose_uniform(curve: crate::lights::ToneCurve, hold: bool) -> CloudComposeUniform {
+/// The composition of this frame's display mode, held or not. `linear`: the buffer holds
+/// linear light already (Physical lighting, sky.rs `physical_cloud_light`), which goes to the
+/// tonemapper as it is, as the physical dome's does; otherwise display values, mapped for the
+/// view's `curve` (tone_input.wesl).
+pub fn compose_uniform(curve: crate::lights::ToneCurve, linear: bool, hold: bool) -> CloudComposeUniform {
     let flag = |b: bool| if b { 1.0 } else { 0.0 };
-    CloudComposeUniform { flags: Vec4::new(curve.code(), flag(hold), 0.0, 0.0) }
+    let code = if linear { crate::lights::ToneCurve::Clipped.code() } else { curve.code() };
+    CloudComposeUniform { flags: Vec4::new(code, flag(hold), 0.0, 0.0) }
 }
 
 /// The volume's material (volumetric_clouds.wesl): the composition's uniform and the medium's
@@ -2725,7 +2729,7 @@ fn show_volume(
     let far_changed = materials.get(&material.0).is_some_and(|m| m.far != medium.image);
     let bound = request.trace.is_some() && medium.image.is_some() && !far_changed;
     let drawing = bound && medium.ready;
-    let compose = compose_uniform(crate::lights::tone_curve(), !drawing);
+    let compose = compose_uniform(crate::lights::tone_curve(), nvf_assets::authored::physical_pbr(), !drawing);
     let compose_changed = materials.get(&material.0).is_some_and(|m| m.params.flags.x != compose.flags.x || m.params.flags.y != compose.flags.y);
     if far_changed || compose_changed {
         if let Some(mut m) = materials.get_mut(&material.0) {
@@ -2823,6 +2827,11 @@ fn count_sky_jumps(
 /// own covers (the amount and the tint shares, [`blend_covers`]).
 fn inputs(sky: &SkyState, c: &CloudCoverOutput, blended: &BlendedCover, temporal: bool) -> VolumeInputs {
     let (light_dir, light_strength) = direct_light(sky.sun_dir(), sky.sun_elevation(), sky.climate.has_moon());
+    // Under Physical lighting the clouds are lit as the dome they lie on is drawn: the
+    // surfaces' sun colour and the physical sky's, in linear light (sky.rs
+    // `physical_cloud_light`; graphics-enhanced.md §3.25), and composed without the
+    // tonemapper's inverse ([`compose_uniform`]).
+    let daylight = nvf_assets::authored::physical_pbr().then(|| sky.physical_cloud_light());
     START.inputs(VolumeInputs {
         plane_height: c.plane_height,
         above_ground: crate::cloud_shadows::plane_above_ground(),
@@ -2832,14 +2841,14 @@ fn inputs(sky: &SkyState, c: &CloudCoverOutput, blended: &BlendedCover, temporal
         bias: sky_bias(sky.weather.classification, sky.prev.as_ref().filter(|_| sky.fade < 1.0).map(|w| w.classification), sky.fade),
         light_dir,
         light_strength,
-        sunlight: sky.color(ColorType::Sunlight),
+        sunlight: daylight.map_or_else(|| sky.color(ColorType::Sunlight), |d| d.sun),
         ambient: ambient_colour(&cloud_parts(sky, &blended.layer_cover, &blended.layer_weathers)),
         sky_scale: sky.sky_scale(),
         display_clip: crate::lights::display_clip(),
         temporal,
         sky: crate::volumetric_clouds_light::SkyLight {
-            upper: sky.color(ColorType::SkyUpper),
-            horizon: sky.color(ColorType::Horizon),
+            upper: daylight.map_or_else(|| sky.color(ColorType::SkyUpper), |d| d.upper),
+            horizon: daylight.map_or_else(|| sky.color(ColorType::Horizon), |d| d.horizon),
             ambient: sky.color(ColorType::Ambient),
             elevation: sky.sun_elevation(),
         },
@@ -4615,9 +4624,10 @@ pub(crate) mod tests {
         assert!(shader.contains("view.unjittered_clip_from_world"), "the buffer is read where the unjittered projection puts the fragment");
         assert_eq!(CloudComposeUniform::min_size().get(), 16);
         use crate::lights::ToneCurve;
-        assert_eq!(compose_uniform(ToneCurve::Clipped, false).flags.x, 1.0);
-        assert_eq!(compose_uniform(ToneCurve::TonyMcMapface, true).flags.y, 1.0);
-        assert_eq!(compose_uniform(ToneCurve::TonyMcMapface, false), CloudComposeUniform::default());
+        assert_eq!(compose_uniform(ToneCurve::Clipped, false, false).flags.x, 1.0);
+        assert_eq!(compose_uniform(ToneCurve::TonyMcMapface, false, true).flags.y, 1.0);
+        assert_eq!(compose_uniform(ToneCurve::TonyMcMapface, false, false), CloudComposeUniform::default());
+        assert_eq!(compose_uniform(ToneCurve::TonyMcMapface, true, false).flags.x, 1.0, "linear light (Physical lighting) skips the inverse");
         assert!(shader.contains("if compose.flags.y > 0.5 {\n        return vec4<f32>(0.0);"), "held: nothing added (premultiplied zero)");
     }
 

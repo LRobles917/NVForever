@@ -358,7 +358,7 @@ mod tests {
                     assert_eq!(lighting.matches("(in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u)").count(), 4, "{case}: each lamp line's diffuse and highlight");
                     // The highlights: what Bevy's line added is taken back by the factor, for
                     // the point and the spot lights, from the one factor read above.
-                    assert_eq!(lighting.matches("if nvf_display { direct_light -= light_contrib * (shadow * (1.0 - mix(nvf_ao_spec, nvf_ao_spec_shadowed, select(0.0, shadows::nvf_shadow_fade(light_id),").count(), 2, "{case}");
+                    assert_eq!(lighting.matches("if nvf_display { direct_light -= light_contrib * (max(shadow, 0.0) * (1.0 - mix(nvf_ao_spec, nvf_ao_spec_shadowed, select(0.0, shadows::nvf_shadow_fade(light_id),").count(), 2, "{case}");
                     assert_eq!(lighting.matches("let nvf_ao_spec = nvf_specular_visibility(nvf_ao_ambient, NdotV, roughness);").count(), 1, "{case}");
                     let p = |s: &str| post.find(s).unwrap_or_else(|| panic!("{case}: {s}"));
                     // After the fog (and the dither), before the alpha is premultiplied; the

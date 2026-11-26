@@ -77,9 +77,10 @@ pub const POINT_LINE_HOOKED: &str = "        @if(!NVF_AMBIENT_OCCLUSION)
         @if(NVF_AMBIENT_OCCLUSION)
         if nvf_display { nvf_direct += nvf_point_display(light_id, in.world_position.xyz, in.N) * shadow * mix(nvf_ao_lamps, nvf_ao_shadowed, select(0.0, shadows::nvf_shadow_fade(light_id), (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u)); }
         // The lamp's highlight (Bevy's `direct_light` holds only that in a world view) by the
-        // highlights' factor: what the line above added without it is taken back.
+        // highlights' factor: what the line above added without it is taken back (the
+        // highlight took the shadow held to 0, light_shadows.rs SHADOW_STRENGTH).
         @if(NVF_AMBIENT_OCCLUSION)
-        if nvf_display { direct_light -= light_contrib * (shadow * (1.0 - mix(nvf_ao_spec, nvf_ao_spec_shadowed, select(0.0, shadows::nvf_shadow_fade(light_id), (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u)))); }
+        if nvf_display { direct_light -= light_contrib * (max(shadow, 0.0) * (1.0 - mix(nvf_ao_spec, nvf_ao_spec_shadowed, select(0.0, shadows::nvf_shadow_fade(light_id), (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u)))); }
 ";
 
 /// A spot light's part of the display-value sum.
@@ -92,9 +93,10 @@ pub const SPOT_LINE_HOOKED: &str = "        @if(!NVF_AMBIENT_OCCLUSION)
         @if(NVF_AMBIENT_OCCLUSION)
         if nvf_display { nvf_direct += nvf_spot_display(light_id, in.world_position.xyz, in.N) * shadow * mix(nvf_ao_lamps, nvf_ao_shadowed, select(0.0, shadows::nvf_shadow_fade(light_id), (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u)); }
         // The lamp's highlight (Bevy's `direct_light` holds only that in a world view) by the
-        // highlights' factor: what the line above added without it is taken back.
+        // highlights' factor: what the line above added without it is taken back (the
+        // highlight took the shadow held to 0, light_shadows.rs SHADOW_STRENGTH).
         @if(NVF_AMBIENT_OCCLUSION)
-        if nvf_display { direct_light -= light_contrib * (shadow * (1.0 - mix(nvf_ao_spec, nvf_ao_spec_shadowed, select(0.0, shadows::nvf_shadow_fade(light_id), (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u)))); }
+        if nvf_display { direct_light -= light_contrib * (max(shadow, 0.0) * (1.0 - mix(nvf_ao_spec, nvf_ao_spec_shadowed, select(0.0, shadows::nvf_shadow_fade(light_id), (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u)))); }
 ";
 
 /// The end of `main_pass_post_lighting_processing`: after the fog, the tonemapping in the

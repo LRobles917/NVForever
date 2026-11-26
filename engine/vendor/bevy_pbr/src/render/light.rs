@@ -10,7 +10,7 @@ use bevy_camera::visibility::{
 };
 use bevy_camera::{Camera, Camera3d, RenderTarget, ShadowLodOrigin};
 use bevy_color::ColorToComponents;
-use bevy_core_pipeline::schedule::RootNonCameraView;
+use bevy_core_pipeline::schedule::{NvfHostedView, RootNonCameraView};
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::schedule::ScheduleLabel;
 use bevy_ecs::system::SystemChangeTick;
@@ -53,7 +53,7 @@ use bevy_render::view::{
 };
 use bevy_render::{
     batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport},
-    camera::SortedCameras,
+    camera::{ExtractedCamera, SortedCameras},
     mesh::allocator::MeshAllocator,
     view::{NoIndirectDrawing, RetainedViewEntity},
 };
@@ -1486,7 +1486,9 @@ pub fn prepare_lights(
     if let Some(parked) = nvf_parked.as_deref_mut() {
         parked.views.clear();
         if let Some(hold) = hold_lights.as_deref().filter(|_| nvf_keep_shadow_phases_on()) {
-            for main in hold.slots.keys() {
+            // (NVForever ALCS far maps: the lamps of the far texture too; left out until
+            // 2026-11-25, so each of their draws specialized and queued every caster anew.)
+            for main in hold.slots.keys().chain(hold.far_slots.keys()) {
                 parked.views.extend((0..6).map(|face| RetainedViewEntity::new(MainEntity::from(*main), None, face)));
             }
             for main in hold.spot_slots.keys() {
@@ -3203,7 +3205,8 @@ pub(crate) struct SpecializeShadowsSystemParam<'w, 's> {
     render_mesh_instances: Res<'w, RenderMeshInstances>,
     render_materials: Res<'w, ErasedRenderAssets<PreparedMaterial>>,
     render_material_instances: Res<'w, RenderMaterialInstances>,
-    shadow_render_phases: Res<'w, ViewBinnedRenderPhases<Shadow>>,
+    // NVForever kept shadow phases: written for the kept views' removed entities.
+    shadow_render_phases: ResMut<'w, ViewBinnedRenderPhases<Shadow>>,
     render_lightmaps: Res<'w, RenderLightmaps>,
     view_light_entities: Query<'w, 's, (&'static LightEntity, &'static ExtractedView)>,
     shadow_map_visible_entities_query: Query<'w, 's, &'static RenderShadowMapVisibleEntities>,
@@ -3235,7 +3238,7 @@ pub(crate) fn specialize_shadows(
             render_mesh_instances,
             render_materials,
             render_material_instances,
-            shadow_render_phases,
+            mut shadow_render_phases,
             render_lightmaps,
             view_light_entities,
             shadow_map_visible_entities_query,
@@ -3422,10 +3425,13 @@ pub(crate) fn specialize_shadows(
 
         // NVForever kept shadow phases (engine/vendor/README.md): a kept view with no view
         // entity this frame missed this frame's changes. An entity removed is dropped from its
-        // pipelines (its light's casters' list drops it, and so its bin, when it draws again);
-        // an entity that changed (its mesh, material or flags) leaves the kept view's bin and
-        // pipeline stale, so that view is dropped whole and drawn again as a new one. Then the
-        // kept views keep their pending queues and pipelines like the live ones.
+        // pipelines and from its bin (from the bin too since 2026-11-25: one removed and then
+        // given another mesh or material in a later frame was no longer among the pipelines,
+        // so the change went unseen, and back in view it was drawn from its old bin, with
+        // the old pipeline, material and mesh); an entity that changed (its mesh, material or
+        // flags) leaves the kept view's bin and pipeline stale, so that view is dropped whole
+        // and drawn again as a new one. Then the kept views keep their pending queues and
+        // pipelines like the live ones.
         nvf_live_before.clear();
         nvf_live_before.extend(view_light_entities.iter().map(|(_, view)| view.retained_view_entity));
         if let Some(parked) = nvf_parked.as_deref().filter(|parked| parked.active) {
@@ -3434,6 +3440,17 @@ pub(crate) fn specialize_shadows(
                 &dirty_specializations.removed_renderables,
             );
             for view in parked.views.iter().filter(|view| !all_shadow_views.contains(*view)) {
+                if !removed.is_empty() {
+                    if let Some(phase) = shadow_render_phases.get_mut(view) {
+                        if phase.nvf_binned_len() < removed.len() {
+                            phase.nvf_retain_binned(|entity, _| !removed.contains(&entity));
+                        } else {
+                            for entity in removed {
+                                phase.remove(*entity);
+                            }
+                        }
+                    }
+                }
                 let Some(cache) = specialized_shadow_material_pipeline_cache.get_mut(view) else {
                     continue;
                 };
@@ -3547,7 +3564,7 @@ pub fn queue_shadows(
     // NVForever ALCS unready casters: whether pipelines are still being built.
     nvf_pipeline_cache: Res<PipelineCache>,
 ) {
-    let (mut nvf_resynced, mut nvf_rebinned) = (0u64, 0u64);
+    let (mut nvf_resynced, mut nvf_rebinned, mut nvf_stale) = (0u64, 0u64, 0u64);
     // NVForever ALCS unready casters: a pipeline still being built anywhere may be one a
     // caster already binned waits for (it is skipped when drawn, and nothing tells).
     let nvf_building = nvf_pipeline_cache.waiting_pipelines().next().is_some();
@@ -3601,16 +3618,30 @@ pub fn queue_shadows(
             .is_some_and(|parked| parked.resumed.contains(&extracted_view_light.retained_view_entity))
         {
             nvf_resynced += 1;
-            nvf_resync_kept_phase(shadow_phase, visible_entities, &mut nvf_items);
+            let (_, stale) = nvf_resync_kept_phase(
+                shadow_phase,
+                visible_entities,
+                |main_entity| {
+                    render_mesh_instances
+                        .render_mesh_queue_data(main_entity)
+                        .map(|mesh_instance| mesh_instance.current_uniform_index)
+                },
+                &mut nvf_items,
+            );
+            nvf_stale += stale as u64;
             mesh_instances_queued_this_iteration_scratch_space.clear();
             mesh_instances_queued_this_iteration_scratch_space
                 .extend(nvf_items.iter().map(|(_, main_entity)| *main_entity));
+            // (Only the pending pairs still visible, as `specialize_shadows` and upstream's
+            // `iter_to_queue` take them: one gone since read as a caster not ready and had
+            // the light drawn once more for nothing.)
             nvf_items.extend(
                 view_pending_shadow_queues
                     .prev_frame
                     .iter()
-                    .filter(|(_, main_entity)| {
-                        mesh_instances_queued_this_iteration_scratch_space.insert(*main_entity)
+                    .filter(|(entity, main_entity)| {
+                        visible_entities.entity_pair_is_visible(*entity, *main_entity)
+                            && mesh_instances_queued_this_iteration_scratch_space.insert(*main_entity)
                     })
                     .copied(),
             );
@@ -3726,6 +3757,7 @@ pub fn queue_shadows(
     }
     nvf_event(NVF_RESYNCED, nvf_resynced);
     nvf_event(NVF_REBINNED, nvf_rebinned);
+    nvf_event(NVF_STALE_BINNED, nvf_stale);
 }
 
 /// NVForever ALCS unready casters (2026-11-24): whether an entity a light sees, not yet
@@ -3771,7 +3803,7 @@ fn nvf_report_unready(light: Entity, casters: u32, building: bool) {
 
 /// NVForever ALCS unready casters: take what [`NVF_UNREADY`] holds.
 pub fn nvf_take_unready_shadow_lights() -> Vec<(Entity, u32, bool)> {
-    NVF_UNREADY.lock().map(|mut unready| core::mem::take(&mut *unready)).unwrap_or_default()
+    NVF_UNREADY.lock().map(|mut unready| mem::take(&mut *unready)).unwrap_or_default()
 }
 
 pub struct Shadow {
@@ -4012,9 +4044,13 @@ impl NvfDirectionalShadowLayerHighWater {
 ///   16..23 of the light's flags (layer + 1; shadow_sampling.wesl `nvf_spot_shadow_layer`).
 ///   A spot light with a slot whose maps are switched off still casts from its layer once
 ///   that layer holds what it drew into this texture.
-/// - `fade` (0..1, absent: 1) scales a light's shadow: the shader takes
-///   `mix(1, shadow, fade)` (shadows.wesl). It is carried in bits 24..31 of the light's
-///   flags as `255 - fade × 255`, so a light without one casts at full strength.
+/// - `fade` (absent: 1) is the weight of a light's shadow, the game's fade in and out
+///   (0..1) times its strength, up to [`NVF_SHADOW_WEIGHT_MAX`]: the shader takes
+///   `1 - weight × (1 - shadow)` (shadows.wesl `nvf_weigh_shadow`), which past a weight of 1
+///   is under 0 where the map shades in full (the game's display sum then takes the rest
+///   from the other light there; Bevy's own sum holds it to 0). It is carried in bits
+///   24..31 of the light's flags ([`nvf_fade_bits`]); a light without one casts as
+///   upstream's.
 ///
 /// A shadowed light's views are brought up to date when its slot or the texture changed,
 /// not only when the light changed. Bevy inserts none; without it nothing changes.
@@ -4165,11 +4201,16 @@ fn nvf_static_layer_attachment(
 /// light flags' bits 16..23 carry.
 const NVF_LAYER_BITS_MAX: usize = 0xff;
 
-/// NVForever held light shadow maps: a light's shadow fade (0..1) in bits 24..31 of its
-/// flags, as `255 - fade × 255` (0: full strength, Bevy's default).
-fn nvf_fade_bits(fade: f32) -> u32 {
-    (255 - (fade.clamp(0.0, 1.0) * 255.0).round() as u32) << 24
+/// NVForever held light shadow maps: a light's shadow weight (its fade, 0..1, times its
+/// strength; held to 0..[`NVF_SHADOW_WEIGHT_MAX`]) in bits 24..31 of its flags, as
+/// `255 - weight × 200`: steps of half a hundredth, and never 0, which is a light without a
+/// weight (1, Bevy's default; shadows.wesl `nvf_shadow_weight`).
+pub fn nvf_fade_bits(fade: f32) -> u32 {
+    (255 - (fade.clamp(0.0, NVF_SHADOW_WEIGHT_MAX) * 200.0).round() as u32) << 24
 }
+
+/// The largest shadow weight the light's flags carry ([`nvf_fade_bits`]).
+pub const NVF_SHADOW_WEIGHT_MAX: f32 = 1.27;
 
 impl bevy_render::extract_resource::ExtractResource<RenderApp> for HoldLightShadowMaps {
     type Source = HoldLightShadowMaps;
@@ -4252,8 +4293,9 @@ pub const NVF_EVENTS: [&str; NVF_EVENT_COUNT] = [
     "views kept",
     "kept phases resynced",
     "entities rebinned",
+    "stale entries requeued",
 ];
-pub const NVF_EVENT_COUNT: usize = 16;
+pub const NVF_EVENT_COUNT: usize = 17;
 const NVF_SPAWNED: usize = 0;
 const NVF_DESPAWNED: usize = 1;
 const NVF_REMADE: usize = 2;
@@ -4279,6 +4321,10 @@ const NVF_VIEWS_KEPT: usize = 13;
 // they were already in, taken out first (none expected; each was a panic before).
 const NVF_RESYNCED: usize = 14;
 const NVF_REBINNED: usize = 15;
+// NVForever kept shadow phases: entities a resumed view's phase still held with an input
+// uniform index that is no longer theirs (their mesh instance was dropped and made again while
+// the view was away), taken out and queued again.
+const NVF_STALE_BINNED: usize = 16;
 
 /// NVForever kept shadow phases: off with `NVF_LIGHT_SHADOW_KEEP_PHASES=0` (a measuring aid
 /// of the game's: a light's phases, pipeline keys and specialized pipelines go with its views,
@@ -4316,6 +4362,13 @@ pub struct NvfParkedShadowViews {
     pub active: bool,
 }
 
+/// NVForever kept shadow phases: the stale-entry check of [`nvf_resync_kept_phase`], off with
+/// `NVF_LIGHT_SHADOW_STALE_CHECK=0` (a measuring aid of the game's: the slabs come back).
+pub fn nvf_stale_check_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("NVF_LIGHT_SHADOW_STALE_CHECK").is_ok_and(|v| v.trim() == "0"))
+}
+
 /// NVForever kept shadow phases: whether the main entity is in the visible list (by main
 /// entity alone; the CPU-culled list is sorted by it).
 pub fn nvf_entity_visible(visible: &RenderVisibleEntitiesClass, main_entity: MainEntity) -> bool {
@@ -4327,21 +4380,36 @@ pub fn nvf_entity_visible(visible: &RenderVisibleEntitiesClass, main_entity: Mai
 }
 
 /// NVForever kept shadow phases: resyncs a kept phase whose view is back with its light's
-/// visible list. The binned entities no longer visible leave their bins; the visible ones not
-/// binned are pushed to `to_queue`. Returns how many left.
+/// visible list. The binned entities no longer visible leave their bins, and so do the stale
+/// ones: a mesh nothing saw while the view was away lost its mesh instance, and seen again it
+/// has another input uniform index (`current_index`) than the one its bin still draws with,
+/// which by then is some other mesh's transform (the slabs and shards of shadow in the Primm
+/// casino, 2026-11-25). The visible ones not binned (the stale ones among them) are pushed to
+/// `to_queue`. Returns how many left for not being visible, and how many for being stale.
 pub fn nvf_resync_kept_phase<BPI: BinnedPhaseItem>(
     phase: &mut BinnedRenderPhase<BPI>,
     visible: &RenderVisibleEntitiesClass,
+    current_index: impl Fn(MainEntity) -> Option<InputUniformIndex>,
     to_queue: &mut Vec<(Entity, MainEntity)>,
-) -> usize {
-    let dropped = phase.nvf_retain_binned(|main_entity| nvf_entity_visible(visible, main_entity));
+) -> (usize, usize) {
+    let mut stale = 0;
+    let check = nvf_stale_check_on();
+    let gone = phase.nvf_retain_binned(|main_entity, binned_with| {
+        if !nvf_entity_visible(visible, main_entity) {
+            return false;
+        }
+        let good = !check || current_index(main_entity) == Some(binned_with);
+        stale += usize::from(!good);
+        good
+    });
+    let dropped = gone - stale;
     to_queue.extend(
         visible
             .iter_visible()
             .filter(|(_, main_entity)| !phase.nvf_is_binned(**main_entity))
             .map(|(entity, main_entity)| (*entity, *main_entity)),
     );
-    dropped
+    (dropped, stale)
 }
 
 /// NVForever kept shadow phases: bins an entity as [`BinnedRenderPhase::add`] does, but with
@@ -4542,11 +4610,102 @@ pub struct NvfLightShadowRecord {
     made_from: EntityHashMap<NvfViewSource>,
 }
 
+/// NVForever hosted shadow views (2026-11-25, engine/vendor/README.md "hosted shadow
+/// views"). Upstream makes every point and spot light shadow view a root view: the camera
+/// driver runs the whole `Core3d` schedule for each (six for a point light's cube), and each
+/// run records four compute passes (uniform allocation, bin unpacking, mesh preprocessing,
+/// the indirect parameters) and the shadow pass, in five command buffers. With the game's
+/// lamps drawing 6 to 8 faces a frame that was most of what their shadows cost the
+/// processor: the render thread took 8.6 ms a frame against 4.6 ms without them, with
+/// 0.4 ms of GPU time in those views (a casino hall of 25 lamps, measured).
+///
+/// While the game's hold is active, those views are drawn the way a camera's cascades
+/// are: the first camera that runs `Core3d` with light views (`host`) takes them into its
+/// own uniform allocation, bin unpacking and mesh preprocessing passes (gpu_preprocess.rs
+/// `gather_shadow_cascades_for_view`), and draws them after its cascades
+/// ([`per_view_shadow_pass`], which builds each one's indirect parameters first, as it
+/// does a cascade's). They carry `NvfHostedView`, so the camera driver runs nothing for
+/// them. Every camera drawn after the host samples this frame's maps, as before; with no
+/// such camera (none, or its window minimized) the views stay root views. Off with `NVF_LIGHT_SHADOW_HOSTED=0` (a
+/// measuring aid).
+#[derive(Resource, Default, Debug)]
+pub struct NvfSharedShadowViews {
+    pub host: Option<Entity>,
+    pub views: Vec<Entity>,
+}
+
+/// NVForever hosted shadow views: how many of them share a command encoder.
+const NVF_HOSTED_VIEWS_PER_ENCODER: usize = 2;
+
+fn nvf_hosted_shadow_views_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let off = std::env::var("NVF_LIGHT_SHADOW_HOSTED").is_ok_and(|v| v.trim() == "0");
+        if off {
+            bevy_log::info!("held light shadow maps: NVF_LIGHT_SHADOW_HOSTED=0, every light's shadow view runs the camera's schedule by itself");
+        }
+        !off
+    })
+}
+
+/// NVForever hosted shadow views: this frame's host and the views it draws
+/// ([`NvfSharedShadowViews`]); render world, once the frame's views are made.
+pub fn nvf_host_shadow_views(
+    mut commands: Commands,
+    hold: Option<Res<HoldLightShadowMaps>>,
+    sorted_cameras: Res<SortedCameras>,
+    cameras: Query<(&ExtractedCamera, Has<ViewLightEntities>, Has<SkipGpuPreprocess>)>,
+    windows: Query<(MainEntity, &bevy_render::view::ExtractedWindow)>,
+    views: Query<(Entity, &LightEntity, Has<NvfHostedView>), With<RootNonCameraView>>,
+    stale: Query<Entity, (With<NvfHostedView>, Without<RootNonCameraView>)>,
+    mut shared: ResMut<NvfSharedShadowViews>,
+) {
+    shared.views.clear();
+    let on = hold.is_some_and(|hold| hold.active) && nvf_hosted_shadow_views_on();
+    let core_3d = Core3d.intern();
+    let host = sorted_cameras
+        .0
+        .iter()
+        .map(|camera| camera.entity)
+        .filter(|_| on)
+        .find(|entity| {
+            cameras.get(*entity).is_ok_and(|(camera, lights, skip)| {
+                // A camera whose window has no size (minimized) is not drawn: the driver
+                // skips its schedule, and with it what it hosts.
+                let drawn = match &camera.target {
+                    Some(bevy_camera::NormalizedRenderTarget::Window(window)) => windows
+                        .iter()
+                        .find(|(main_entity, _)| *main_entity == window.entity())
+                        .is_some_and(|(_, w)| w.physical_width > 0 && w.physical_height > 0),
+                    _ => true,
+                };
+                lights && !skip && drawn && camera.schedule == core_3d
+            })
+        });
+    for (entity, light, hosted) in &views {
+        let take = host.is_some() && matches!(light, LightEntity::Point { .. } | LightEntity::Spot { .. });
+        if take {
+            shared.views.push(entity);
+        }
+        if take && !hosted {
+            commands.entity(entity).insert(NvfHostedView);
+        } else if !take && hosted {
+            commands.entity(entity).remove::<NvfHostedView>();
+        }
+    }
+    for entity in &stale {
+        commands.entity(entity).remove::<NvfHostedView>();
+    }
+    shared.host = host.filter(|_| !shared.views.is_empty());
+}
+
 pub fn per_view_shadow_pass<const IS_LATE: bool>(
     world: &World,
     view: ViewQuery<&ViewLightEntities>,
     // NVForever held shadow maps.
     hold_directional: Option<Res<HoldDirectionalShadowMaps>>,
+    // NVForever hosted shadow views.
+    nvf_shared: Option<Res<NvfSharedShadowViews>>,
     light_entities: Query<&LightEntity>,
     view_light_query: Query<(
         &ShadowView,
@@ -4555,6 +4714,8 @@ pub fn per_view_shadow_pass<const IS_LATE: bool>(
         Has<PreprocessBindGroups>,
         Has<SkipGpuPreprocess>,
         Has<NoIndirectDrawing>,
+        // NVForever static shadow cache (the hosted views').
+        Option<&NvfStaticShadowFace>,
     )>,
     shadow_render_phases: Res<ViewBinnedRenderPhases<Shadow>>,
     preprocess_pipelines: Option<Res<PreprocessPipelines>>,
@@ -4564,6 +4725,7 @@ pub fn per_view_shadow_pass<const IS_LATE: bool>(
     build_indirect_parameters_metadata: Option<Res<BuildIndirectParametersMetadata>>,
     mut ctx: RenderContext,
 ) {
+    let nvf_view_entity = view.entity();
     let view_lights = view.into_inner();
 
     let diagnostics = ctx.diagnostic_recorder();
@@ -4585,6 +4747,7 @@ pub fn per_view_shadow_pass<const IS_LATE: bool>(
             has_preprocess_bind_groups,
             has_skip_gpu_preprocess,
             has_no_indirect_drawing,
+            _,
         )) = view_light_query.get(view_light_entity)
         else {
             continue;
@@ -4631,6 +4794,65 @@ pub fn per_view_shadow_pass<const IS_LATE: bool>(
             // NVForever static shadow cache: the cascades have none.
             None,
         );
+    }
+
+    // NVForever hosted shadow views: the point and spot lights' views this camera hosts,
+    // each as a cascade above (its indirect parameters, then its map). Not in the late
+    // pass: they have no occlusion culling.
+    if !IS_LATE
+        && let Some(shared) = nvf_shared
+            .as_deref()
+            .filter(|shared| shared.host == Some(nvf_view_entity))
+    {
+        let hosted_span = diagnostics.time_span(ctx.command_encoder(), "hosted_shadow_views");
+        for (nvf_index, view_light_entity) in shared.views.iter().copied().enumerate() {
+            // Two views to a command encoder: finishing one is most of what a view costs
+            // the processor, and a system's encoders are finished side by side
+            // (bevy_render render_context.rs `nvf_split_encoder`).
+            if nvf_index % NVF_HOSTED_VIEWS_PER_ENCODER == 0 {
+                ctx.nvf_split_encoder();
+            }
+            let Ok((
+                view_light,
+                extracted_light_view,
+                occlusion_culling,
+                has_preprocess_bind_groups,
+                has_skip_gpu_preprocess,
+                has_no_indirect_drawing,
+                nvf_static_face,
+            )) = view_light_query.get(view_light_entity)
+            else {
+                continue;
+            };
+            if has_preprocess_bind_groups
+                && !has_skip_gpu_preprocess
+                && !has_no_indirect_drawing
+                && let (Some(preprocess_pipelines), Some(build_indirect_parameters_metadata)) =
+                    (&preprocess_pipelines, &build_indirect_parameters_metadata)
+            {
+                run_build_indirect_parameters(
+                    &mut ctx,
+                    extracted_light_view.retained_view_entity,
+                    build_indirect_params_bind_groups.as_deref(),
+                    &pipeline_cache,
+                    indirect_parameters_buffers.as_deref(),
+                    build_indirect_parameters_metadata,
+                    &preprocess_pipelines.early_phase,
+                    "early_hosted_shadow_indirect_parameters_building",
+                );
+            }
+            view_shadow_pass::<IS_LATE>(
+                view_light_entity,
+                view_light,
+                extracted_light_view,
+                occlusion_culling,
+                world,
+                &shadow_render_phases,
+                &mut ctx,
+                nvf_static_face,
+            );
+        }
+        hosted_span.end(ctx.command_encoder());
     }
 
     time_span.end(ctx.command_encoder());

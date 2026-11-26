@@ -454,7 +454,7 @@ fn layout_entries(
                     feature = "webgpu"
                 )
             ))]
-            (45, texture_cube_array(TextureSampleType::Depth)),
+            (50, texture_cube_array(TextureSampleType::Depth)),
             // Directional Shadow Texture Array
             (
                 5,
@@ -985,7 +985,7 @@ pub fn prepare_mesh_view_bind_groups(
                         feature = "webgpu"
                     )
                 ))]
-                (45, &shadow_bindings.nvf_point_light_far_depth_texture_view),
+                (50, &shadow_bindings.nvf_point_light_far_depth_texture_view),
                 (5, &shadow_bindings.directional_light_depth_texture_view),
                 (6, &shadow_samplers.directional_light_comparison_sampler),
                 #[cfg(feature = "experimental_pbr_pcss")]

@@ -15,27 +15,57 @@ import bevy_render::{
 
 const flip_z: vec3<f32> = vec3<f32>(1.0, 1.0, -1.0);
 
-// NVForever held light shadow maps (light.rs `HoldLightShadowMaps`): how much of its
-// shadow a point or spot light casts, 0..1. The game fades a light's shadow in and out; it
-// carries 255 - fade * 255 in bits 24..31 of the light's flags, so 0 (every other light)
-// is full strength.
-fn nvf_shadow_fade(light_id: u32) -> f32 {
+// NVForever held light shadow maps (light.rs `HoldLightShadowMaps::fade`): the weight of a
+// point or spot light's shadow, the game's fade (in and out, 0..1) times its strength
+// (which may pass 1). Bits 24..31 of the light's flags carry 255 - weight * 200, so 0 (every
+// other light) is 1 (light.rs `nvf_fade_bits`).
+fn nvf_shadow_weight(light_id: u32) -> f32 {
     let bits = (view_bindings::clustered_lights.data[light_id].flags >> 24u) & 0xffu;
-    return 1.0 - f32(bits) / 255.0;
+    return select(f32(255u - bits) / 200.0, 1.0, bits == 0u);
 }
 
-// NVForever held light shadow maps: Bevy's point shadow, faded.
+// NVForever held light shadow maps: how far a light's shadow has faded in, 0..1 (the
+// weight without what its strength adds past 1).
+fn nvf_shadow_fade(light_id: u32) -> f32 {
+    return min(nvf_shadow_weight(light_id), 1.0);
+}
+
+// NVForever held light shadow maps: the least `nvf_weigh_shadow` gives a light, where
+// its map shades in full. Under 0 with a weight past 1.
+fn nvf_shadow_floor(light_id: u32) -> f32 {
+    return 1.0 - nvf_shadow_weight(light_id);
+}
+
+// NVForever held light shadow maps: a light's shadow (1 lit, 0 shaded) by its weight,
+// 1 - weight * (1 - shadow). With a weight past 1 a shaded place gets less than none of
+// the light: the game's display sum (nvforever lights/display_shader.rs) takes the rest
+// from the other light there. Bevy's own sum takes `max(shadow, 0)`.
+fn nvf_weigh_shadow(light_id: u32, shadow: f32) -> f32 {
+    return 1.0 - nvf_shadow_weight(light_id) * (1.0 - shadow);
+}
+
+// NVForever held light shadow maps: Bevy's point shadow, by its weight, 0..1.
 fn fetch_point_shadow(
     light_id: u32,
     frag_position: vec4<f32>,
     surface_normal: vec3<f32>,
     frag_coord_xy: vec2<f32>,
 ) -> f32 {
-    let shadow = nvf_fetch_point_shadow_unfaded(light_id, frag_position, surface_normal, frag_coord_xy);
-    return mix(1.0, shadow, nvf_shadow_fade(light_id));
+    return max(nvf_fetch_point_shadow_weighed(light_id, frag_position, surface_normal, frag_coord_xy), 0.0);
 }
 
-// NVForever held light shadow maps: Bevy's spot shadow, faded.
+// NVForever held light shadow maps: the same, not held to 0 (`nvf_weigh_shadow`).
+fn nvf_fetch_point_shadow_weighed(
+    light_id: u32,
+    frag_position: vec4<f32>,
+    surface_normal: vec3<f32>,
+    frag_coord_xy: vec2<f32>,
+) -> f32 {
+    let shadow = nvf_fetch_point_shadow_unfaded(light_id, frag_position, surface_normal, frag_coord_xy);
+    return nvf_weigh_shadow(light_id, shadow);
+}
+
+// NVForever held light shadow maps: Bevy's spot shadow, by its weight, 0..1.
 fn fetch_spot_shadow(
     light_id: u32,
     frag_position: vec4<f32>,
@@ -43,8 +73,19 @@ fn fetch_spot_shadow(
     near_z: f32,
     frag_coord_xy: vec2<f32>,
 ) -> f32 {
+    return max(nvf_fetch_spot_shadow_weighed(light_id, frag_position, surface_normal, near_z, frag_coord_xy), 0.0);
+}
+
+// NVForever held light shadow maps: the same, not held to 0 (`nvf_weigh_shadow`).
+fn nvf_fetch_spot_shadow_weighed(
+    light_id: u32,
+    frag_position: vec4<f32>,
+    surface_normal: vec3<f32>,
+    near_z: f32,
+    frag_coord_xy: vec2<f32>,
+) -> f32 {
     let shadow = nvf_fetch_spot_shadow_unfaded(light_id, frag_position, surface_normal, near_z, frag_coord_xy);
-    return mix(1.0, shadow, nvf_shadow_fade(light_id));
+    return nvf_weigh_shadow(light_id, shadow);
 }
 
 // NVForever held light shadow maps: Bevy's `fetch_point_shadow`, renamed.

@@ -18,7 +18,7 @@ enable wgpu_binding_array;
 // NVForever ALCS far maps (light.rs `HoldLightShadowMaps::far_slots`): the far lights' cubes,
 // of another side; read with binding 2's samplers (shadow_sampling.wesl `nvf_point_far`).
 @if(!NO_CUBE_ARRAY_TEXTURES_SUPPORT)
-@group(0) @binding(45) var nvf_point_shadow_far_textures: texture_depth_cube_array;
+@group(0) @binding(50) var nvf_point_shadow_far_textures: texture_depth_cube_array;
 @if(PCSS_SAMPLERS_AVAILABLE)
 @group(0) @binding(4) var point_shadow_textures_linear_sampler: sampler;
 @if(NO_ARRAY_TEXTURES_SUPPORT)

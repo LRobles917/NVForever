@@ -709,11 +709,21 @@ fn sample_shadow_cubemap_pcss(
 //   filter or steep its angle to the light (a receiver-plane bias, exact for a flat one);
 // - `proj`: the light's `light_custom_data` (clip z and w from the major-axis distance);
 // - `light_size`: the light's radius, world units.
-// The search covers the light as seen from the fragment (`light_size / distance`), with a
-// tap at the fragment itself so a small thing next to its shadow is always found; the
-// filter's width is the penumbra of the blockers found, `light_size * (receiver - blocker)
-// / blocker`, never under `NVF_SOFT_FILTER_MIN` texels. The taps turn by a per-pixel angle,
-// a new one each frame while the view jitters (TAA, FSR, DLSS), which then smooth it.
+// The search covers `NVF_SOFT_SEARCH_SCALE` times the light as seen from the fragment
+// (`light_size / distance`), with a tap at the fragment itself so a small thing next to
+// its shadow is always found; the filter's width is the penumbra of the blockers found,
+// `light_size * (receiver - blocker) / blocker`, never under `NVF_SOFT_FILTER_MIN` texels
+// and never over the search's radius. The taps turn by a per-pixel angle, a new one each
+// frame while the view jitters (TAA, FSR, DLSS), which then smooth it.
+//
+// The filter is held to the search (2026-11-25): seen from the light, a blocker shades the
+// fragment from as far to the side as its penumbra is wide, so a filter wider than the
+// search blurred a shadow whose outer part the search never found: a faint blob with a
+// hard outline in place of the shadow, where a lamp hangs close over what it lights and the
+// floor is far below (playtest 2026-11-24: "character shadows look better on Performance").
+// The widest filter is `NVF_SOFT_FILTER_MAX` (it was 0.07, 4 degrees: a body's shadow two
+// metres from a lamp was blurred over 30 cm and gone; at 0.03 a seated man's shadow on the
+// floor under a lamp by his head was still a smudge next to the plain filter's).
 //
 // With `light_size` 0 (the game's lamps without soft shadows, its Performance choice) there
 // is no search: a fixed filter of `NVF_SOFT_FILTER_MIN` texels with fewer taps, smooth
@@ -726,9 +736,12 @@ const NVF_PLAIN_FILTER_TAPS: u32 = 8u;
 // The narrowest filter, in texels of the light's map: wide enough that a map's texels do
 // not show as blocks along a shadow's edge.
 const NVF_SOFT_FILTER_MIN: f32 = 1.75;
-// The widest search and filter, as tangents from the light (about 6 and 4 degrees).
-const NVF_SOFT_SEARCH_MAX: f32 = 0.1;
-const NVF_SOFT_FILTER_MAX: f32 = 0.07;
+// The widest search and filter, as a tangent from the light (about 0.9 degrees: 5 cm at
+// 3.5 m, four times the plain filter of a 1024 map), and the search's radius over the
+// light's width as the fragment sees it (2: blockers down to a third of the way from the
+// light are found over their whole penumbra).
+const NVF_SOFT_FILTER_MAX: f32 = 0.015;
+const NVF_SOFT_SEARCH_SCALE: f32 = 2.0;
 const NVF_GOLDEN_ANGLE: f32 = 2.39996323;
 
 // The major-axis distance a clip-space depth of the light's projection stands for.
@@ -798,7 +811,7 @@ fn nvf_sample_shadow_cubemap_soft(
     taps = NVF_SOFT_FILTER_TAPS;
     // 1. The blockers between the fragment and the light, over the light's width as the
     // fragment sees it. Tap 0 is the fragment's own direction.
-    let search = clamp(light_size / receiver, 2.0 * texel, NVF_SOFT_SEARCH_MAX);
+    let search = clamp(NVF_SOFT_SEARCH_SCALE * light_size / receiver, 2.0 * texel, max(NVF_SOFT_FILTER_MAX, 2.0 * texel));
     var blockers = vec2(0.0);
     for (var i = 0u; i <= NVF_SOFT_SEARCH_TAPS; i += 1u) {
         var off = vec2(0.0);
@@ -820,7 +833,7 @@ fn nvf_sample_shadow_cubemap_soft(
         return 1.0;
     }
     let blocker = blockers.x / blockers.y;
-    filter_width = clamp(light_size * (receiver - blocker) / max(blocker * receiver, 1.0e-4), NVF_SOFT_FILTER_MIN * texel, NVF_SOFT_FILTER_MAX);
+    filter_width = clamp(light_size * (receiver - blocker) / max(blocker * receiver, 1.0e-4), NVF_SOFT_FILTER_MIN * texel, search);
     }
     }
 

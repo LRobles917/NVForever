@@ -1951,7 +1951,7 @@ impl Plugin for TweaksPlugin {
                 "tweak-armor-condition-penalty",
                 GROUP,
                 "Armour Condition Penalty",
-                "How fast armour under half condition loses its DT and DR; x1.0 changes nothing. (Stewie's Tweaks bCustomArmorConditionPenalty)",
+                "How fast armour under half condition loses DT and DR (x1.0: to half, the original; x2.0: to none). (Stewie's Tweaks bCustomArmorConditionPenalty)",
                 Slider {
                     get: |w| part(w.get_resource::<TweakSettings>().map_or(1.0, |t| t.game.armor_condition_penalty)),
                     set: |w, v| {
@@ -2095,7 +2095,7 @@ impl Plugin for TweaksPlugin {
         switch!(app, "female-facial-hair", "Facial Hair for Women", "The character creator and the barber offer facial hair to a woman too. (Stewie's Tweaks bRaceMenuAllowFemaleFacialHair)", female_facial_hair);
         switch!(app, "terminal-password-prompt", "Show Use Password", "A locked terminal whose password note the player holds says so in its prompt until first opened. (Stewie's Tweaks bShowUsePasswordOnTerminalsWithNote)", game.terminal_password_prompt);
         switch!(app, "lockpick-move-keys", "Lockpicking With the Movement Keys", "Lockpicking: strafe moves the pin (Shift fast, Ctrl slow), Forward, Back, Jump the driver. (Stewie's Tweaks bLockPickMenuKeyboardMovement)", game.lockpick_move_keys);
-        switch!(app, "store-all", "Store All", "Shift with Take All stores everything listed but what is worn or a quest's. (Stewie's Tweaks bContainerMenuStoreAllHotkey)", store_all);
+        switch!(app, "store-all", "Store All", "In a container, Shift with Take All stores everything listed but what is worn or a quest's. (Stewie's Tweaks bContainerMenuStoreAllHotkey)", store_all);
         switch!(app, "map-recentre-key", "Map Recentre Key", "C puts the Pip-Boy's local or world map back on the player after it was dragged. (Stewie's Tweaks bMapRecenterHotkey)", game.map_recentre_key);
         switch!(app, "map-marker-distance", "Map Marker Distance", "The World Map says how far the marker under the pointer is from the player. (Stewie's Tweaks bMapLocationDisplayDistance)", game.map_marker_distance);
         switch!(app, "quantity-shows-price", "Quantity Box Shows the Price", "In a barter, the \"How many?\" box says what the amount costs. (Stewie's Tweaks bBarterQuantityMenuShowsPrice)", game.quantity_shows_price);
@@ -2104,7 +2104,7 @@ impl Plugin for TweaksPlugin {
         switch!(app, "quick-load-in-menus", "Quick Load From the Menus", "The QuickLoad key loads the quicksave from the main and pause menus too. (Stewie's Tweaks bStartMenuQuickLoad)", quick_load_in_menus);
         switch!(app, "preview-perks", "Preview Perks on Level Up", "A level-up without a perk still shows the perks page, to look at with none to take. (Stewie's Tweaks bPreviewPerksOnLevelUp)", game.preview_perks);
         switch!(app, "pick-locks-with-key", "Pick Locks Even With the Key", "Holding Shift, a lock the player has the key of opens the lockpicking game instead. (Stewie's Tweaks bPickLocksEvenWithKey)", pick_locks_with_key);
-        switch!(app, "right-click-previous-category", "Right Click for the Previous Category", "A right click on a list's heading steps back to the previous category. (Stewie's Tweaks bRightClickChangesToPreviousContainerCategory)", right_click_previous_category);
+        switch!(app, "right-click-previous-category", "Right Click for the Previous Category", "In a container or a barter, a right click on a list's heading goes back a category. (Stewie's Tweaks bRightClickChangesToPreviousContainerCategory)", right_click_previous_category);
         switch!(app, "mark-notes-unread", "Mark Notes Unread", "A right click on a note in the Pip-Boy marks it unread again. (Stewie's Tweaks bMarkNotesUnread)", game.mark_notes_unread);
         switch!(app, "full-barter-total", "Barter Total Past the Merchant's Caps", "Barter shows the whole total past the merchant's caps, though it pays only those. (Stewie's Tweaks bShowBarterTotalWhenOverSellLimit)", full_barter_total);
         switch!(app, "compass-fade-left", "Compass Fades on the Left", "Marks on the compass fade toward its left end (quest marks stay whole), for a compass seen from its middle. (Stewie's Tweaks bCompassFadeLeftSide)", compass_fade_left);
@@ -2293,7 +2293,7 @@ impl Plugin for TweaksPlugin {
         switch!(app, "double-tap-ammo", "Double-Tap Reload Changes Ammo", "Tapping Reload twice quickly swaps the ammo type; one tap reloads after a third of a second. (Stewie's Tweaks bDoubleTapReloadToChangeAmmoType)", double_tap_ammo);
         switch!(app, "improved-weather", "Improved Weather", "A short fast travel keeps the weather instead of rolling a new one for the trip. (Stewie's Tweaks bImprovedWeather)", improved_weather);
         switch!(app, "vats-stop-following-dead", "V.A.T.S. Stops Following the Dead", "A kill camera stops turning after its target once it is dead, holding where it last saw it alive. (Stewie's Tweaks bVATSStopFollowingDeadTargets)", vats_stop_following_dead);
-        switch!(app, "night-vision-toggle", "Night Vision Toggle", "With a night-vision scope up, the light's key switches its night vision on and off. (Stewie's Tweaks bAddNightVisionToggle)", night_vision_toggle);
+        switch!(app, "night-vision-toggle", "Night Vision Toggle", "With a night-vision scope up, the light's key (holding Tab, or its own key) toggles its night vision. (Stewie's Tweaks bAddNightVisionToggle)", night_vision_toggle);
         switch!(app, "night-vision-off-first", "Night Vision Toggle: Off Until Switched On", "A night-vision scope gives no night vision until you switch it on. (bDisableVisionByDefault)", night_vision_off_first);
         switch!(app, "night-vision-by-day", "Night Vision Toggle: By Day Too", "A night-vision scope gives its night vision by day as well. (bAllowNightVisionDuringDay)", night_vision_by_day);
         switch!(app, "kill-cam-outside-vats", "Kill Camera Outside V.A.T.S.", "Kills outside V.A.T.S. get kill cameras too (Kill camera rules), 20 s apart. (Ours; see Stewie's Tweaks bUseHitLocationInCinematicKillcams)", kill_cam_outside_vats);

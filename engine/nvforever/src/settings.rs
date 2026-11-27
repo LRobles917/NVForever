@@ -1827,7 +1827,7 @@ fn take_shadow_resolution(w: &mut World, text: &str) -> bool {
 
 /// The ALC shadows row's note (light_shadows.rs; ALC: All Lights Cast, the user-visible
 /// name since 2026-11-19, once Lamp shadows; the INI key stays `light-shadows`).
-const LIGHT_SHADOWS_NOTE: &str = "ALC (All Lights Cast): lamps, fires and spot lights cast shadows within the shadow distance. Costs frame rate. Not in the original.";
+const LIGHT_SHADOWS_NOTE: &str = "ALC (All Lights Cast): lamps, fires and spot lights cast shadows in the shadow distance; Performance redraws less often. Costs frame rate. Not in the original.";
 
 fn light_shadows_chosen(w: &World) -> String {
     let choice = w.get_resource::<crate::light_shadows::LightShadows>().map_or(0, |l| l.choice);

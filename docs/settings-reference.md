@@ -957,7 +957,7 @@ below cover them all.
 ### `quality`: Quality preset
 
 - On the page: Sets the rows the quality presets cover to the game folder's low.ini to
-  VeryHigh.ini values, Smooth terrain too. Custom: none match.
+  VeryHigh.ini, and Smooth terrain (Off at Low and Medium). Custom: none match.
 - In full: Sets the rows the original's quality presets cover to the values of the game
   folder's low.ini, medium.ini, high.ini or VeryHigh.ini: Sun shadows, Shadow filtering,
   Light glow, Mirrored reflections and the object, actor, item, shadow and grass
@@ -1068,8 +1068,8 @@ below cover them all.
 - More: docs/design/terrain-shadows.md, docs/design/sun-visibility.md
 ### `light-shadows`: ALC shadows
 
-- On the page: ALC (All Lights Cast): lamps, fires and spot lights cast shadows within the
-  shadow distance. Costs frame rate. Not in the original.
+- On the page: ALC (All Lights Cast): lamps, fires and spot lights cast shadows in the
+  shadow distance; Performance redraws less often. Costs frame rate. Not in the original.
 - In full: ALC stands for All Lights Cast; the row was called Lamp shadows until 2026-11-19.
   The INI key `light-shadows`, the switch `--light-shadows` and the log lines starting
   `light shadows:` keep the old name, so saved settings, scripts and the smoke scenarios go
@@ -1475,8 +1475,8 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
 
 ### `smooth-terrain`: Smooth terrain
 
-- On the page: Smooths height steps while keeping bumps and ridges: 2 x 2 or 4 x 4 squares
-  per landscape square. Applies at the next start.
+- On the page: Smooths height steps while keeping bumps and ridges: 2 x 2 or 4 x 4 per
+  landscape square, or 4 x 4 near and 2 x 2 further. Applies at the next start.
 - In full: [design, #2149, #2676] A list: Off, 2 x 2, 4 x 4 and 4 x 4 near; 4 x 4 by
   default (smoothing on by the maintainer's decision of 2026-11-13; 4 × 4 and the recipe,
   detail, bound 8 units and thresholds 2:6, are the contributor's pick from in-game

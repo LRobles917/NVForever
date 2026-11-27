@@ -499,7 +499,7 @@ pub fn register(app: &mut App, group: &'static str) {
             key: QUALITY_KEY,
             group,
             label: "Quality preset",
-            note: "Sets the rows the quality presets cover to the game folder's low.ini to VeryHigh.ini values, Smooth terrain too. Custom: none match.",
+            note: "Sets the rows the quality presets cover to the game folder's low.ini to VeryHigh.ini, and Smooth terrain (Off at Low and Medium). Custom: none match.",
             switches: "",
             get: |_| false,
             set: |_, _| {},

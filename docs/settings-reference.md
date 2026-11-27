@@ -1302,6 +1302,22 @@ below cover them all.
 - 0 % to 200 % in steps of 10 %, 100 % by default; greyed while Volumetric light is off.
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `physical-pbr`: Physical lighting (experimental)
+
+- On the page: On: light, sky, fog and exposure follow physical rules instead of the
+  original's display values. Still being tuned. Takes effect at the next start. Not in the
+  original.
+- In full: The world is lit with Oren-Nayar diffuse and Cook-Torrance GGX specular with
+  Schlick Fresnel, lamps fall off with the square of the distance, the sky lights everything
+  as image-based light, the game's fog fades into the physical sky's horizon, the picture
+  tonemaps with Tony McMapface, and exposure and bloom are tuned for linear light. Read at the
+  start: the row changes the next start's lighting. Off by default and in every preset;
+  the original's display-value lighting stays the default look. The volumetric clouds and
+  Volumetric light run with it, lit by the same sun and sky. With a material pack and
+  Reflections on authored materials, the pack's materials keep their reflections and other
+  surfaces take flat ambient light in place of the sky's.
+- Command-line switches: `--graphics-only`
+- More: docs/design/graphics-enhanced.md §3.25
 ### `bloom`: Bloom
 
 - On the page: On: light brighter than a sunlit white wall (the sun, lamps, windows) glows

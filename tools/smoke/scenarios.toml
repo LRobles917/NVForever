@@ -37452,6 +37452,34 @@ forbid = [
 ]
 
 [[scenario]]
+name = "tonemap-preset-pick"
+source = "#4690 stage 1, docs/design/tonemapping-presets.md: a preset file in the home's Tonemapping folder is listed on the Graphics row Tonemapping preset; the run starts on Default (Bevy's default grading), and picking the file's preset on the page lays its values on the world camera at once. tonemap-preset-kept starts in the same home"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/tone_presets.rs", "crates/nvf-settings-layout/src/lib.rs", "engine/nvf-play/src/settings.rs"]
+note = "The home's INI may hold an earlier run's pick: Default is picked first (taken only when it is not chosen already), then the test preset, which is then always a change."
+env = { NVFOREVER_HOME = "tonemap-preset-home", NVF_PLAY_TEST_TONE_PRESET = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:page,12:tonemap-preset=Default,13:tonemap-preset=Smoke Dusk" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--no-voice", "--no-lodgen", "--no-messages"]
+run_seconds = 18
+expect = [
+  { text = "NVF_PLAY_TEST_TONE_PRESET: wrote", count = 1, label = "the test preset is written into the run's home" },
+  { re = 'tonemapping presets: 1 in .*Tonemapping', label = "the folder is read with the preset in it" },
+  { text = "tonemapping presets: Smoke Dusk (exposure +0.50 EV, contrast 1.10, highlights 0.30)", count = 1, label = "the pick lays the preset's values on the world camera" },
+]
+forbid = [{ re = 'tonemapping presets: .* left out: ', label = "a preset file refused" }, { text = "Caught rendering error", label = "a rendering (validation) error" }]
+
+[[scenario]]
+name = "tonemap-preset-kept"
+source = "#4690 stage 1, docs/design/tonemapping-presets.md: a start in tonemap-preset-pick's home reads the saved row and lays the picked preset on the world camera from the first frame"
+note = "runs after tonemap-preset-pick in the same home."
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/tone_presets.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVFOREVER_HOME = "tonemap-preset-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--no-voice", "--no-lodgen", "--no-messages"]
+run_seconds = 14
+expect = [{ text = "tonemapping presets: Smoke Dusk (exposure +0.50 EV, contrast 1.10, highlights 0.30)", count = 1, label = "the saved pick is the active preset after a restart" }]
+forbid = [{ text = "tonemapping presets: Default", label = "the saved pick not read" }, { text = "Caught rendering error", label = "a rendering (validation) error" }]
+
+[[scenario]]
 name = "occlusion-culling-row-pick"
 source = "#3783, docs/settings-reference.md occlusion-culling: the Graphics row Occlusion culling is off by default and is read once at the start; turning it on in the page keeps this run as it was (off) and writes the next start's choice. occlusion-culling-row starts in the same home"
 areas = ["graphics", "ui"]

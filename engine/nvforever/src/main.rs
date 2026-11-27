@@ -143,6 +143,7 @@ mod light_shadows;
 mod lights;
 mod photo_lights;
 mod physical_ibl;
+mod tone_presets;
 mod limbs;
 mod lips;
 mod memory_budget;
@@ -2052,6 +2053,7 @@ fn run_with_args(line: Vec<String>) -> AppExit {
     // Physical lighting's image-based light from the sky (graphics-enhanced.md §3.25); idle
     // without the row.
     .add_plugins(physical_ibl::PhysicalIblPlugin)
+    .add_plugins(tone_presets::TonePresetsPlugin)
     .add_plugins(sun_visibility::SunVisibilityPlugin)
     // The ambient occlusion's shader for the lighting (imported only under its def).
     .add_plugins(ssao_lighting::SsaoLightingPlugin)

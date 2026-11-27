@@ -1318,6 +1318,19 @@ below cover them all.
   surfaces take flat ambient light in place of the sky's.
 - Command-line switches: `--graphics-only`
 - More: docs/design/graphics-enhanced.md §3.25
+
+### `tonemap-preset`: Tonemapping preset
+
+- On the page: A look laid on the tonemapper: exposure, contrast and highlight roll-off.
+  Default keeps the shipped look. Presets are files in the Tonemapping folder of
+  NVForever's home. Not in the original.
+- In full: Default and the presets found in `<NVForever home>\Tonemapping\` at the start,
+  one TOML file each (docs/design/tonemapping-presets.md has the format). The pick takes
+  effect at once, in either lighting mode and with HDR output, and is kept by its name; a
+  name no longer on disk falls back to Default. The eye adaptation still applies on top.
+  HDR output's calibration stays the display's own.
+- Command-line switches: none
+- More: docs/design/tonemapping-presets.md (#4690)
 ### `bloom`: Bloom
 
 - On the page: On: light brighter than a sunlit white wall (the sun, lamps, windows) glows

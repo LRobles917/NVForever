@@ -38,23 +38,38 @@ Reading the answer: the rifle bobs as the pistol does → the stand-in (A) is ri
 bobs in another way → a bob made by code (B), to be measured from the video; it does not
 bob → the original walks a rifle on `mt` (C), and #4682 goes back to the owner.
 
-## Partial answer, 2026-11-28: running forward
+## Partial answer, 2026-11-28: items 1, 2 and 4
 
-[observed: a contributor's video of the original (xNVSE without plugins, no other mods),
-800×452, the Goodsprings road; the weapon's place on screen tracked frame by frame, sizes
-in screen pixels]. It has items 1 and 2 standing and running forward only.
+[observed: two videos of the original by a contributor (xNVSE without plugins, no other
+mods), 800×452, the Goodsprings road, about 7 minutes in all. The weapon's place on screen
+is tracked frame by frame and the movement read from the ground's motion. Rates come from
+counted step dips; sizes are in screen pixels.] Item 3 (fists) is not in them.
 
-- Standing, the rifle has no step bob, only a slow sway side to side, once in about 1.9 s
-  (13 px). The sway goes on while running, with both weapons.
-- Running, both weapons bob, one dip per footstep: the rifle 2.56 steps a second, the
-  pistol 2.85–2.94, so the rifle's is 0.87–0.90 as fast. Side to side once per stride
-  (rifle 1.28, pistol 1.50 a second), about the same size (6.4 and 6.9 px). The dip is
-  9.6 px for the rifle and 12.7–14.7 px for the pistol. Pixels are not units: the tracked
-  parts of the two weapons are at different distances from the camera.
-- Ours since #4682, running (motion trace): the rifle 2.20 steps a second at 309 units/s,
-  the pistol 2.38 at 344, so 0.92. Our rifle runs slower than the pistol, and the clip
-  plays at the speed's rate. Whether the original's rifle is slower because it runs
-  slower too, or because its bob is slower at the same speed, the video doesn't show.
-  Both of ours step about a fifth slower than the original's.
-- Reading so far: (A) for running. Still open: walking forward, sideways and back, fists,
-  and the crippled leg.
+Steps a second, one dip of the weapon per footstep:
+
+| | Varmint Rifle | 9mm Pistol |
+|---|---|---|
+| Standing | no step bob | – |
+| Walking forward | 1.64 and 1.67 | 1.94 (42 dips); about 1.6 in a shorter, uneven stretch |
+| Walking sideways | 1.85–1.86 | 1.88–2.06 |
+| Walking back | 2.00 | 2.18 |
+| Running forward | about 2.56 | 2.81–2.91 |
+| Left leg crippled, forward | 1.95–2.21 | 2.01–2.12 (a pistol: the 9mm or the 10mm) |
+
+- Every move bobs both weapons, the rifle as the pistol: one dip per footstep and a sway
+  side to side per stride. Standing, there's only a slow sway, once in about 1.9 s, which
+  goes on under the steps.
+- Sizes of the dip: walking forward 7–8 px for the rifle and about 10 for the pistol,
+  running 11 and 14–15, sideways 4–5 for both. Pixels are not units: the tracked parts of
+  the two weapons are at different distances from the camera.
+- With the left leg crippled (`player.damageav LeftMobilityCondition 100`; the Pip-Boy
+  shows it), both weapons still bob, one dip per footstep, with no long-short rhythm on
+  screen. Ours limps a pistol on `hurt\1hp*_hurt.kf`, which moves nothing (animation.md
+  §9.5), so ours keeps it still. That difference is older than #4682.
+- Ours since #4682 (motion trace): walking forward, both 1.68 steps a second (87 units/s);
+  running, the rifle 2.20 (309 units/s) and the pistol 2.38 (344). The rifle's walk
+  matches the original's; both of our runs step slower than the original's.
+- Reading so far: not (C). The rifle bobs as the pistol does, and walking at the rate the
+  stand-in gives it, which fits (A). But the crippled pistol bobs although its limping
+  clips don't, so the original's bob may not come from the files alone (B). Item 3
+  decides: the `mt` clips carry no bob, so fists that bob mean a bob made by code.

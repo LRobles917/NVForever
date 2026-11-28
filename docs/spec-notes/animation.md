@@ -1121,11 +1121,13 @@ Sources: `fnvtool nif stats` over every mesh archive of the base game and the ad
   original walks a two-handed weapon on the `1hp`/`1hm` clips (ours since #4682,
   `player_clips::first_person_move_clips`), bobs it by code or keeps it still is observer
   check 4682-first-person-rifle-walk-bob.
-- Running in the original, first person (2026-11-28) [observed: a video, the weapon
-  tracked on screen; observer check 4682-first-person-rifle-walk-bob has the figures]: the
-  Varmint Rifle bobs as the 9mm Pistol does, one dip per footstep and a sway per stride.
-  It steps 2.56 times a second, the pistol 2.85–2.94. Ours with the fix steps 2.20 (rifle)
-  and 2.38 (pistol).
+- In the original, first person (2026-11-28) [observed: two videos, the weapon tracked on
+  screen; observer check 4682-first-person-rifle-walk-bob has the figures]: the Varmint
+  Rifle bobs as the 9mm Pistol does, walking forward, sideways and back and running, one
+  dip per footstep and a sway per stride. Walking forward it steps 1.64–1.67 times a
+  second (ours with the fix 1.68), running about 2.56 (ours 2.20). With the left leg
+  crippled both still bob, the pistol too, although its `hurt\1hp*` clips move nothing;
+  ours keeps a limping pistol still.
 - Readings [hypothesis]: the game turns `Bip01 Looking` with the view's pitch (it is the
   only node at camera height between the root and the arms, and `Bip01 Translate` undoes
   its offset), so arms and weapon stay in front of the camera at `Camera1st`; crouching

@@ -37,3 +37,24 @@ The lag behind a turn is not part of this check (Weapon Inertia, §1.4a).
 Reading the answer: the rifle bobs as the pistol does → the stand-in (A) is right; it
 bobs in another way → a bob made by code (B), to be measured from the video; it does not
 bob → the original walks a rifle on `mt` (C), and #4682 goes back to the owner.
+
+## Partial answer, 2026-11-28: running forward
+
+[observed: a contributor's video of the original (xNVSE without plugins, no other mods),
+800×452, the Goodsprings road; the weapon's place on screen tracked frame by frame, sizes
+in screen pixels]. It has items 1 and 2 standing and running forward only.
+
+- Standing, the rifle has no step bob, only a slow sway side to side, once in about 1.9 s
+  (13 px). The sway goes on while running, with both weapons.
+- Running, both weapons bob, one dip per footstep: the rifle 2.56 steps a second, the
+  pistol 2.85–2.94, so the rifle's is 0.87–0.90 as fast. Side to side once per stride
+  (rifle 1.28, pistol 1.50 a second), about the same size (6.4 and 6.9 px). The dip is
+  9.6 px for the rifle and 12.7–14.7 px for the pistol. Pixels are not units: the tracked
+  parts of the two weapons are at different distances from the camera.
+- Ours since #4682, running (motion trace): the rifle 2.20 steps a second at 309 units/s,
+  the pistol 2.38 at 344, so 0.92. Our rifle runs slower than the pistol, and the clip
+  plays at the speed's rate. Whether the original's rifle is slower because it runs
+  slower too, or because its bob is slower at the same speed, the video doesn't show.
+  Both of ours step about a fifth slower than the original's.
+- Reading so far: (A) for running. Still open: walking forward, sideways and back, fists,
+  and the crippled leg.

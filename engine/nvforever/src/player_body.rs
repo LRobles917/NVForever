@@ -4429,6 +4429,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_the_arms_rig_walks_a_rifle_on_the_pistol_clips() {
+        // #4682: standing, the first-person rig tries `1hp` after the rifle's own clip;
+        // the body keeps its own choice, and so does a limp.
+        let walk = ClipKey::Move(Stance::Stand, false, false, Dir::Forward, Some("2hr"), false, false);
+        assert_eq!(walk.candidates(View::First)[..2], [r"locomotion\2hrforward.kf".to_string(), r"locomotion\1hpforward.kf".to_string()]);
+        assert!(!walk.candidates(View::Third).iter().any(|c| c.contains("1hp")));
+        let limp = ClipKey::Move(Stance::Stand, false, false, Dir::Forward, Some("2hr"), true, false);
+        assert_eq!(limp.candidates(View::First), limp.candidates(View::Third));
+    }
+
+    #[test]
     fn the_hand_over_sets_off_softly_and_ends_at_rest() {
         assert_eq!(handover_share(0.0), 0.0);
         assert_eq!(handover_share(EQUIP_HANDOVER_FROM), 0.0);
